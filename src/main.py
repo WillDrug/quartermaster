@@ -55,6 +55,9 @@ class QuarterMaster:
         self.__shutdown = False
 
     def run(self):
+        asyncio.run(self.__run())  # MAIN ENTRYPOINT
+
+    async def __run(self):
         waiter = self.config.delay_counter()
         waiter.__next__()
         waiter.send(True)
@@ -62,18 +65,18 @@ class QuarterMaster:
         while not self.__shutdown:
             for i in self.interfaces:
                 if not self.interfaces[i]['receive_queue'].empty():
-                    self.process_command(self.interfaces[i]['receive_queue'].get(), i)
+                    asyncio.create_task(self.process_command(self.interfaces[i]['receive_queue'].get(), i))
                     wait_time = 0
-            sleep(wait_time)
+            await asyncio.sleep(wait_time)
             wait_time = waiter.send(wait_time == 0)
 
-    def process_command(self, command: Union[Command, Response], interface: str) -> None:
+    async def process_command(self, command: Union[Command, Response], interface: str) -> None:
         if isinstance(command, Response):
             if command.command_id in self.waiting:
                 self.waiting[command.command_id] = command
             return
         try:
-            data = self.command_processors[command.command_type](command, interface)
+            data = await self.command_processors[command.command_type](command, interface)
         except Exception as e:
             resp = Response(command_id=command.command_id, data=None, error=True,
                             error_message=f"{e.__class__.__name__}: {e.__str__()}")  # fixme remove class.
@@ -83,7 +86,27 @@ class QuarterMaster:
                                 error_message=f"Expected Response, got None")
             else:
                 resp = Response(command_id=command.command_id, data=data)
-        return asyncio.run(self.dispatch_command(resp, interface))
+        return await self.dispatch_command(resp, interface)
+
+    async def __dispatch_to_all(self, command: Union[Command, Response]):
+        return await asyncio.gather(*[self.dispatch_command(command, i) for i in self.interfaces])
+
+    async def dispatch_command(self, command: Union[Command, Response], interface: str, awaiting=False):
+        if interface not in self.interfaces:
+            raise AttributeError(f'{interface} is not a running interface')
+        if awaiting:
+            self.waiting[command.command_id] = None
+        self.interfaces[interface]['send_queue'].put(command)
+        if not awaiting:
+            return
+        start = time()
+        while self.waiting[command.command_id] is None:
+            await asyncio.sleep(self.config.response_delay)
+            if time() - start > 10:
+                return Response(command_id=command.command_id, error=True, error_message="Timeout on response")
+        resp = self.waiting[command.command_id]
+        del self.waiting[command.command_id]
+        return resp
 
 
     """ EVENTS SECTION """
@@ -92,27 +115,28 @@ class QuarterMaster:
 
 
     """ EVENTS SECTION END """
+
     """ GENERAL COMMANDS SECTION """
 
-    def auth(self, command, interface):
+    async def auth(self, command, interface):
         user = self._users.get(User.make_key(interface, command.key))
         if user is None:
             user = User(interface=interface, interface_id=command.key, name=command.value)
             self._users.upsert(user)
         return user
 
-    def rooms(self, command, interface):
+    async def rooms(self, command, interface):
         rooms = self._rooms.search(command.key, command.value)
         rooms = [q for q in rooms if
                  q.owner == command.auth.secret or command.auth.secret in q.invited or command.auth.secret in q.roommates]
         return rooms
 
-    def users(self, command, interface):
+    async def users(self, command, interface):
         if isinstance(command.value, list):
             return list(chain(*[self._users.search(command.key, q) for q in command.value]))
         return self._users.search(command.key, command.value)
 
-    def merge(self, command, interface):
+    async def merge(self, command, interface):
         # 1) get current user from auth
         authcheck = self._users.get(command.auth.key())
         if authcheck is None:  # fixme write exceptions
@@ -132,7 +156,7 @@ class QuarterMaster:
             user.secret = shared_secret
         return shared_secret
 
-    def destroy(self, command, interface):  # todo: implement the call to this or delete
+    async def destroy(self, command, interface):  # todo: implement the call to this or delete
         if command.key is None:
             self._rooms.delete('owner', command.auth.secret)
             self._users.delete('secret', command.auth.secret)
@@ -142,7 +166,7 @@ class QuarterMaster:
         self._rooms.delete_via_obj([to_del])
         return True
 
-    def create(self, command, interface):
+    async def create(self, command, interface):
         if command.key == 'Room':
             o = Room(**command.value)
             self._rooms.upsert(o)
@@ -153,7 +177,7 @@ class QuarterMaster:
             raise NotImplemented(f'Tried creating {command.key}, don\'t know what that is.')
         return o
 
-    def edit(self, command, interface):
+    async def edit(self, command, interface):
         if isinstance(command.value, dict):
             command.value = [command.value]
         if command.key == 'Room':
@@ -172,13 +196,13 @@ class QuarterMaster:
             resp = resp[0]
         return resp
 
-    def invite(self, command, interface):
-        return self.process_invitation(command, interface)
+    async def invite(self, command, interface):
+        return await self.process_invitation(command, interface)
 
-    def roommate(self, command, interface):
-        return self.process_invitation(command, interface)
+    async def roommate(self, command, interface):
+        return await self.process_invitation(command, interface)
 
-    def process_invitation(self, command, interface):
+    async def process_invitation(self, command, interface):
         if isinstance(command.key, str):
             rms = self._rooms.search('name', command.key)
             if rms.__len__() != 1:
@@ -218,12 +242,12 @@ class QuarterMaster:
             owner_name = self._users.search('secret', invite.creator)
             return {'owner': owner_name, 'rooms': [q.name for q in rooms], 'status': 'roommate' if invite.roommate else 'guest'}
 
-    def invite_clear(self, command, interface):
+    async def invite_clear(self, command, interface):
         invites = self._invites.search('creator', command.auth.secret)
         self._invites.delete_via_obj(invites)
         return True
 
-    def evict(self, command, interface):
+    async def evict(self, command, interface):
         if isinstance(command.key, str):
             room = self._rooms.get(command.key)
             if room is None:
@@ -254,6 +278,18 @@ class QuarterMaster:
             self._rooms.upsert(room)
         return True
 
+    async def shutdown(self, command, interface):
+        await self.__dispatch_to_all(Command(command_type=CommandType.shutdown))
+        for q in Interface.impl_list():
+            i = self.interfaces.get(q)
+            if i is None:
+                raise RuntimeError(f'Process for interface {q} not found')
+            i['process'].join()
+            self.__shutdown = True
+
+    async def save(self, command, interface):
+        return True
+
     """ GENERAL COMMANDS SECTION END """
 
     def update_secrets(self, old_secret: pydantic.UUID5, new_secret: pydantic.UUID5):
@@ -270,37 +306,9 @@ class QuarterMaster:
                 room.roommates.pop(room.roommates.index(old_secret))
                 room.roommates.append(new_secret)
 
-    async def __dispatch_to_all(self, command: Union[Command, Response]):
-        return await asyncio.gather(*[self.dispatch_command(command, i) for i in self.interfaces])
 
-    async def dispatch_command(self, command: Union[Command, Response], interface: str, awaiting=False):
-        if interface not in self.interfaces:
-            raise AttributeError(f'{interface} is not a running interface')
-        if awaiting:
-            self.waiting[command.command_id] = None
-        self.interfaces[interface]['send_queue'].put(command)
-        if not awaiting:
-            return
-        start = time()
-        while self.waiting[command.command_id] is None:
-            sleep(self.config.response_delay)
-            if time() - start > 10:
-                return Response(command_id=command.command_id, error=True, error_message="Timeout on response")
-        resp = self.waiting[command.command_id]
-        del self.waiting[command.command_id]
-        return resp
 
-    def shutdown(self, command, interface):
-        asyncio.run(self.__dispatch_to_all(Command(command_type=CommandType.shutdown)))
-        for q in Interface.impl_list():
-            i = self.interfaces.get(q)
-            if i is None:
-                raise RuntimeError(f'Process for interface {q} not found')
-            i['process'].join()
-            self.__shutdown = True
 
-    def save(self, command, interface):
-        return True
 
 
 if __name__ == '__main__':
