@@ -1,3 +1,5 @@
+import asyncio
+
 from src.interfaces.interface import Interface
 import telebot
 from time import sleep
@@ -76,6 +78,7 @@ def with_auth(func):
     def perform_auth(self, message):
         if message.from_user.id not in self.userbase:
             resp = self.auth(message.from_user.id, message.from_user.username)
+
             if not resp.error:
                 self.userbase[message.from_user.id] = resp.data
             else:
@@ -640,7 +643,7 @@ class Telegram(Interface):
     def initialize(self):
         while not self._shutdown:
             self.bot.polling()  # fixme configurable delay
-            sleep(1)
+            sleep(self.config.polling_delay)
 
     def local_shutdown(self):
         self.bot.stop_bot()

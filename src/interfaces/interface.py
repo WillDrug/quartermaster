@@ -1,3 +1,4 @@
+import asyncio
 from abc import ABCMeta, abstractmethod
 from time import sleep, time
 import threading
@@ -25,16 +26,25 @@ class Interface(metaclass=ABCMeta):
         self.threads = [threading.Thread(daemon=True, target=self.process_commands),
                         threading.Thread(daemon=True, target=self.initialize)]
         self.waiting = {}
+        self.loop = asyncio.get_event_loop()
 
-    def process_command(self, command: Union[Command, Response]):
+    async def process_command(self, command: Union[Command, Response]):
         if isinstance(command, Response):
             if command.command_id in self.waiting:
                 if self.waiting[command.command_id] is None:
                     self.waiting[command.command_id] = command
                 elif callable(self.waiting[command.command_id]):
                     return self.waiting[command.command_id](command)
+        if isinstance(command, Command):
+            pass
 
-    def dispatch_command(self, command: Union[Command, Response, list], awaiting=True):
+    def dispatch_command(self, command: Union[Command, Response, list], awaiting=True):  # asyncio bridge
+        resp = self.loop.create_task(self._dispatch_command(command, awaiting=awaiting))
+        while not resp.done():
+            sleep(self.config.polling_delay)  # presuming 100% completion due to the timer inside
+        return resp.result()
+
+    async def _dispatch_command(self, command: Union[Command, Response, list], awaiting=True):
         if not isinstance(command, list):
             command = [command]
         for c in command:
@@ -46,7 +56,7 @@ class Interface(metaclass=ABCMeta):
         if awaiting:
             start = time()
             while any(self.waiting[q] is None for q in ids):
-                sleep(self.config.response_delay)
+                await asyncio.sleep(self.config.response_delay)
                 if time() - start > 10:
                     for c in command:
                         if self.waiting[c.command_id] is None:
@@ -75,6 +85,9 @@ class Interface(metaclass=ABCMeta):
         pass
 
     def process_commands(self):
+        self.loop.run_until_complete(self.__process_commands())
+
+    async def __process_commands(self):
         processed = False
         waiter = self.config.delay_counter()
         waiter.__next__()
@@ -86,11 +99,10 @@ class Interface(metaclass=ABCMeta):
                     if command.command_type == CommandType.shutdown:
                         self._shutdown = True
                         continue
-                self.process_command(command)
+                asyncio.create_task(self.process_command(command))
                 processed = True
-            else:
-                sleep(waiter.send(processed))
-                processed = False
+            await asyncio.sleep(waiter.send(processed))
+            processed = False
 
     def run(self):
         for thread in self.threads:
@@ -102,8 +114,7 @@ class Interface(metaclass=ABCMeta):
     """command section"""
     def auth(self, user_id, user_name):
         command = Command(command_type=CommandType.auth, key=user_id, value=user_name)
-        resp = self.dispatch_command(command, awaiting=True)
-        return resp
+        return self.dispatch_command(command, awaiting=True)
 
     def get_own_rooms(self, auth, name):
         """
