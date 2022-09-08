@@ -6,6 +6,7 @@ class Config:
     shutdown_delay = 5
     response_delay = 1
     polling_delay = 1
+    sync_delay = 30
     master_ids = ['Telegram391834810']
 
     def delay_counter(self):

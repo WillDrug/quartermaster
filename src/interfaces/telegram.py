@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from src.interfaces.interface import Interface
 import telebot
@@ -116,16 +117,44 @@ class Telegram(Interface):
         self.bot.message_handler(commands=['save'])(self.save_command)
         self.bot.message_handler(commands=['shutdown'])(self.shutdown_command)
         # todo: send an invintation for an event for invited
+        self.bot.message_handler(func=lambda message: not message.text.startswith('/') and
+                                                      self.is_public(message))(self.save_activity)
+        # todo: check on join if invited and shit
+        self.bot.chat_member_handler()(self.chat_member_event)
+
+    @with_auth
+    def chat_member_event(self, event: telebot.types.ChatMemberUpdated):
+        if event.old_chat_member.status == 'left' and event.new_chat_member.status != 'left':
+            self._user_joins(event.new_chat_member.user.id, event.new_chat_member.user.username, event.chat.id)
+        if event.old_chat_member.status != 'left' and event.new_chat_member.status == 'left':
+            self._user_leaves(event.new_chat_member.user.id, event.chat.id)
+        self.sync()
+
+    def save_activity(self, message: telebot.types.Message):  # todo cache managed rooms
+        self._save_activity(message.from_user.id, message.from_user.username, message.chat.id)
 
     def inline(self, inline_query):
-        r = telebot.types.InlineQueryResultArticle('1', 'Invite this user',
+        res = [telebot.types.InlineQueryResultArticle('1', 'Invite via code',
                                                    telebot.types.InputTextMessageContent(
                                                        f'https://t.me/{self.handle}?start={inline_query.query}'
-                                                   ))
-        self.bot.answer_inline_query(inline_query.id, [r], cache_time=1)
+                                                   ))]
+        auth = self.auth(inline_query.from_user.id, inline_query.from_user.username)
+        if not auth.error:
+            rooms = self.get_own_rooms(auth.data, None)
+            if not rooms.error:
+                rooms = [q for q in rooms.data if not q.closed]
+                for room in rooms:
+                    res.append(telebot.types.InlineQueryResultArticle(room.name, f'Give {room.name} address',
+                                                                      telebot.types.InputTextMessageContent(
+                                                                          f'You can join {room.name} via {room.address}'
+                                                                      )))
 
-    def chat_type(self, message: Union[telebot.types.Message, telebot.types.CallbackQuery]):
+        self.bot.answer_inline_query(inline_query.id, res, cache_time=1)
+
+    def chat_type(self, message: Union[telebot.types.Message, telebot.types.CallbackQuery, telebot.types.ChatJoinRequest]):
         if isinstance(message, telebot.types.Message):
+            chat_type = message.chat.type
+        elif isinstance(message, telebot.types.ChatJoinRequest):
             chat_type = message.chat.type
         else:
             chat_type = message.message.chat.type
@@ -154,7 +183,7 @@ class Telegram(Interface):
             if resp.error:
                 self.bot.send_message(message.chat.id, f'Failed to process your invite: {resp.error_message}')
             else:
-                txt = f'You have been invited by {resp.data["owner"].name} to join '
+                txt = f'You have been invited by {resp.data["owner"]} to join '
                 txt += "their home" if resp.data["rooms"].__len__() == 0 else \
                     ("the following rooms: " + ", ".join(resp.data["rooms"]))
                 txt += f' as a {resp.data["status"]}'
@@ -561,6 +590,7 @@ class Telegram(Interface):
                                          reply_markup=markup)
         return self.bot.send_message(chat_id, f'{username} {command}ed, ye.')
 
+    @with_auth
     def lockunlockcloseopentimeout_command(self, message):
         cmd = message.text.split()
         if cmd.__len__() == 1:
@@ -639,10 +669,30 @@ class Telegram(Interface):
         self.dispatch_command(Command(command_type=CommandType.shutdown), awaiting=False)
 
     """ BOT SECTION END """
+    """ EVENT SECTION """
+    async def local_users(self, command):
+        try:
+            chat = self.bot.get_chat(command.key.interface_id)
+        except telebot.apihelper.ApiTelegramException as e:
+            return Response(command_id=command.command_id, error=True, error_message=e.__str__())
+        count = self.bot.get_chat_member_count(chat.id)
+        localinfo = [user for user in self.activity if self.activity[user]['room'] == command.key]
+        resp = Response(command_id=command.command_id, data=localinfo, error=count != localinfo.__len__())
+        return resp
+
+    async def kick(self, command):
+        try:
+            chat = self.bot.get_chat(command.key)
+        except telebot.apihelper.ApiTelegramException as e:
+            return Response(command_id=command.command_id, error=True, error_message=e.__str__())
+        for user in command.value:
+            self.bot.kick_chat_member(chat.id, user.interface_id)
+        return Response(command_id=command.command_id, data=True)
+    """ EVENT SECTION END """
 
     def initialize(self):
         while not self._shutdown:
-            self.bot.polling()  # fixme configurable delay
+            self.bot.polling(allowed_updates=telebot.util.update_types)  # fixme configurable delay
             sleep(self.config.polling_delay)
 
     def local_shutdown(self):
@@ -651,6 +701,7 @@ class Telegram(Interface):
 
 if __name__ == '__main__':
     from multiprocessing import Queue
-
-    t = Telegram(Queue(), Queue())
-    t.run()
+    from src.utility.config import Config
+    t = Telegram(Queue(), Queue(), Config())
+    t.bot.get_chat(391834833310)
+    #t.run()

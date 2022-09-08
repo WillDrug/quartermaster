@@ -28,7 +28,11 @@ class Storage(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def delete(self, key: str, value: Any) -> None:
+    def delete(self, key: str):
+        pass
+
+    @abstractmethod
+    def delete_via_attr(self, key: str, value: Any) -> None:
         pass
 
     @abstractmethod
@@ -74,7 +78,10 @@ class InMemory(Storage):
 
         self.data[new_obj.key()] = new_obj
 
-    def delete(self, key: str, value: Any) -> None:
+    def delete(self, key: str):
+        del self.data[key]
+
+    def delete_via_attr(self, key: str, value: Any) -> None:
         dumplist = []
         for o in self.data:
             if hasattr(self.data[o], key):

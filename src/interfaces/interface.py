@@ -19,6 +19,7 @@ class Interface(metaclass=ABCMeta):
         :param args:
         :param kwargs:
         """
+        self.activity = {}
         self.config = config
         self.rec_queue = send_queue
         self.send_queue = receive_queue
@@ -27,8 +28,10 @@ class Interface(metaclass=ABCMeta):
                         threading.Thread(daemon=True, target=self.initialize)]
         self.waiting = {}
         self.loop = asyncio.get_event_loop()
+        self.last_sync = time.time()
 
     async def process_command(self, command: Union[Command, Response]):
+        print(f'processing {command}')
         if isinstance(command, Response):
             if command.command_id in self.waiting:
                 if self.waiting[command.command_id] is None:
@@ -36,15 +39,30 @@ class Interface(metaclass=ABCMeta):
                 elif callable(self.waiting[command.command_id]):
                     return self.waiting[command.command_id](command)
         if isinstance(command, Command):
-            pass
+            if command.command_type == CommandType.evict:
+                resp = await self.kick(command)
+            elif command.command_type == CommandType.users:
+                resp = await self.local_users(command)
+            if isinstance(resp, Response):
+                return await self._dispatch_command(resp, awaiting=False)
+
+    @abstractmethod
+    async def kick(self, command):
+        pass
+
+    @abstractmethod
+    async def local_users(self, command):
+        pass
 
     def dispatch_command(self, command: Union[Command, Response, list], awaiting=True):  # asyncio bridge
+        print(f'Interface dispatching {command}')
         resp = self.loop.create_task(self._dispatch_command(command, awaiting=awaiting))
         while not resp.done():
             sleep(self.config.polling_delay)  # presuming 100% completion due to the timer inside
         return resp.result()
 
     async def _dispatch_command(self, command: Union[Command, Response, list], awaiting=True):
+        print(f'Sending {command}')
         if not isinstance(command, list):
             command = [command]
         for c in command:
@@ -54,10 +72,10 @@ class Interface(metaclass=ABCMeta):
         ids = [c.command_id for c in command]
         resp = {}
         if awaiting:
-            start = time()
+            start = time.time()
             while any(self.waiting[q] is None for q in ids):
                 await asyncio.sleep(self.config.response_delay)
-                if time() - start > 10:
+                if time.time() - start > 10:
                     for c in command:
                         if self.waiting[c.command_id] is None:
                             self.waiting[c.command_id] = Response(
@@ -92,6 +110,7 @@ class Interface(metaclass=ABCMeta):
         waiter = self.config.delay_counter()
         waiter.__next__()
         waiter.send(True)
+        self.last_sync = time.time()
         while not self._shutdown:
             if not self.rec_queue.empty():
                 command = self.rec_queue.get()
@@ -101,6 +120,9 @@ class Interface(metaclass=ABCMeta):
                         continue
                 asyncio.create_task(self.process_command(command))
                 processed = True
+            if time.time() - self.last_sync > self.config.sync_delay:
+                self.last_sync = time.time()
+                await self.async_sync()
             await asyncio.sleep(waiter.send(processed))
             processed = False
 
@@ -112,6 +134,29 @@ class Interface(metaclass=ABCMeta):
         self.shutdown()
 
     """command section"""
+    async def async_sync(self):
+        active = self.activity
+        self.activity = {}
+        return await self._dispatch_command(Command(command_type=CommandType.sync, value=active), awaiting=False)
+
+    def sync(self):
+        active = self.activity
+        self.activity = {}
+        return self.dispatch_command(Command(command_type=CommandType.sync, value=active), awaiting=False)
+
+    def _save_activity(self, user_id, username, room_id):
+        if room_id not in self.activity:
+            self.activity[room_id] = {}
+        self.activity[room_id][user_id] = {'name': username, 'active': time.time()}
+
+    def _user_joins(self, user_id, username, room_id):
+        self._save_activity(user_id, username, room_id)
+        return self.dispatch_command(Command(command_type=CommandType.join, key=room_id,
+                                             value={'name': username, 'user_id': user_id}), awaiting=False)
+
+    def _user_leaves(self, user_id, room_id):
+        return self.dispatch_command(Command(command_type=CommandType.leave, key=room_id, value=user_id), awaiting=False)
+
     def auth(self, user_id, user_name):
         command = Command(command_type=CommandType.auth, key=user_id, value=user_name)
         return self.dispatch_command(command, awaiting=True)

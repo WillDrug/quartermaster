@@ -10,7 +10,7 @@ class CommandType(Enum):
     save = 'save'
     auth = 'auth'    # auth = None
     rooms = 'rooms'  # auth: owner\invited\roommate, key: attribute, value: search term
-    users = 'users'  # same shit
+    users = 'users'  # same shit   # interface-bound: key room id, value expected count. response list of users in room
     merge = 'merge'  # auth: requesting user, value: secret; follows the same rules everywhere.
     destroy = 'destroy'  # auth: requesting, key: room or None
     create = 'create'  # auth: owner, key: class, value: dict for class creation
@@ -18,7 +18,10 @@ class CommandType(Enum):
     invite = 'invite'  # auth: creator\invitee, key: room or None, value: secret code or None
     invite_clear = 'invite_clear'  # fixme this is horrific
     roommate = 'roommate'  # same shit
-    evict = 'evict'  # auth, key: room or None, value: username
+    evict = 'evict'  # auth, key: room or None, value: username   interface bound key room value list of kicks
+    sync = 'sync'  # no auth, value: user_ids: time
+    join = 'join'
+    leave = 'leave'
 
 
 auth_required = ['rooms', 'merge', 'destroy', 'create', 'edit', 'invite', 'roommate', 'evict']  # shutdown?

@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-
+import random
 import pydantic
 from multiprocessing import Queue, Process
 from src.interfaces import Interface, run_interface
@@ -62,6 +62,7 @@ class QuarterMaster:
         waiter.__next__()
         waiter.send(True)
         wait_time = 0
+        test = time()
         while not self.__shutdown:
             for i in self.interfaces:
                 if not self.interfaces[i]['receive_queue'].empty():
@@ -98,25 +99,110 @@ class QuarterMaster:
             self.waiting[command.command_id] = None
         self.interfaces[interface]['send_queue'].put(command)
         if not awaiting:
-            return
+            return Response(command_id=command.command_id, data=True)
         start = time()
         while self.waiting[command.command_id] is None:
             await asyncio.sleep(self.config.response_delay)
             if time() - start > 10:
+                del self.waiting[command.command_id]
                 return Response(command_id=command.command_id, error=True, error_message="Timeout on response")
         resp = self.waiting[command.command_id]
         del self.waiting[command.command_id]
         return resp
 
-
     """ EVENTS SECTION """
 
+    async def generate_events(self):
+        return self.generate_room_commands()
 
+    async def generate_room_commands(self, rooms=None):
+        if rooms is None:
+            rooms = self._rooms.search_func(lambda o: True)  # sync rooms. sync users (remove unused).
+        return await asyncio.gather(*[self.room_events(room) for room in rooms])
 
+    async def room_events(self, room):  # go over sync time, and kick, remove
+        print(f'Room event for {room}')
+        if room.closed:  # closed room: all but the roommates and the owner are kicked
+            searcher = lambda o: room.key() == o.room and o.user not in room.roommates and o.user != room.owner
+        elif room.invited:
+            searcher = lambda o: room.key() == o.room and o.user not in room.roommates and o.user != room.owner and (
+                    o.user not in room.invited or time() - o.last_sync > room.timeout)
+        else:
+            searcher = lambda \
+                    o: room.key() == o.room and o.user not in room.roommates and o.user != room.owner \
+                       and time() - o.last_sync > room.timeout
+
+        guests = self._guests.search_func(searcher)
+        guests_secrets = [q.user for q in guests]
+        users = self._users.search_func(lambda o: o.secret in guests_secrets)
+        print(f'Users: {users} with ful base {self._users.search_func(lambda o: True)}')
+        if users.__len__() == 0:
+            return
+        self._guests.delete_via_obj(guests)
+        c = Command(command_type=CommandType.evict, key=room.interface_id, value=users)  # dispatch kick command
+        resp = await self.dispatch_command(c, room.interface, awaiting=True)
+        if resp.error:
+            print(f'Failed to kick: {resp.error_message}')
+        return
+
+    async def user_events(self, user):  # no user events yet.
+        return
 
     """ EVENTS SECTION END """
 
     """ GENERAL COMMANDS SECTION """
+
+    async def join(self, command, interface):
+        user = self._users.get(User.make_key(interface, command.value['user_id']))
+        if user is None:
+            user = User(interface=interface, interface_id=command.value['user_id'],
+                        name=command.value['name'])
+            self._users.upsert(user)
+        room = self._rooms.get(Room.make_key(interface, command.key))
+        if room is None:
+            return
+        kick = False
+        if user.secret != room.owner:
+            if room.locked and user.secret not in room.invited and user.secret not in room.roommates:
+                kick = True
+            if room.closed and user.secret not in room.roommates:
+                kick = True
+        if kick:
+            return await self.dispatch_command(Command(command_type=CommandType.evict, key=room.interface_id,
+                                                       value=[user]), interface, awaiting=False)
+        self._guests.upsert(Guest(user=user.secret, room=room.key(), last_sync=time()))
+
+    async def leave(self, command, interface):
+        user = self._users.get(User.make_key(interface, command.value))
+        if user is None:
+            raise ArithmeticError(f'User not found')
+        room = self._rooms.get(Room.make_key(interface, command.key))
+        if room is None:
+            raise ArithmeticError(f'Room not found')
+        guest = self._guests.get(Guest.make_key(user.secret, room.key()))
+        self._guests.delete_via_obj([guest])
+        return
+
+    async def sync(self, command, interface):
+        for room_id in command.value:  # user activity upsert from entire interface
+            room = self._rooms.get(Room.make_key(interface, room_id))
+            if room is None:
+                continue
+            for user_id in command.value[room_id]:
+                user = self._users.get(User.make_key(interface, user_id))
+                if user is None:
+                    user = User(interface=interface, interface_id=user_id, name=command.value[room_id][user_id]['name'])
+                    self._users.upsert(user)
+
+                guest = self._guests.get(Guest.make_key(user.secret, room.key()))
+                if guest is not None:
+                    guest.last_sync = command.value[room_id][user_id]['active']
+                else:
+                    guest = Guest(user=user.secret, room=room.key(),
+                                  last_sync=command.value[room_id][user_id]['active'])
+                    self._guests.upsert(guest)
+        # events generation is part of sync
+        return await self.generate_room_commands(rooms=self._rooms.search('interface', interface))
 
     async def auth(self, command, interface):
         user = self._users.get(User.make_key(interface, command.key))
@@ -157,13 +243,14 @@ class QuarterMaster:
         return shared_secret
 
     async def destroy(self, command, interface):  # todo: implement the call to this or delete
-        if command.key is None:
-            self._rooms.delete('owner', command.auth.secret)
-            self._users.delete('secret', command.auth.secret)
-            self._invites.delete('creator', command.auth.secret)
+        if command.key is None:  # do not deleting remembered user as they can still be a guest somewhere.
+            rooms = self._rooms.search('owner', command.auth.secret)
+            for room in rooms:
+                self._guests.delete_via_attr('room', room.key())
+            self._rooms.delete_via_obj(rooms)
+            self._invites.delete_via_attr('creator', command.auth.secret)
             return True
-        to_del = self._rooms.get(command.key)
-        self._rooms.delete_via_obj([to_del])
+        self._rooms.delete(command.key)
         return True
 
     async def create(self, command, interface):
@@ -182,8 +269,12 @@ class QuarterMaster:
             command.value = [command.value]
         if command.key == 'Room':
             storage = self._rooms
+            events_func = self.room_events
         elif command.key == 'User':
             storage = self._users
+            events_func = self.user_events
+        else:
+            raise ArithmeticError(f'Unknown key to edit')
         resp = []
         for val in command.value:
             o = storage.get(val.get('key'))
@@ -192,6 +283,7 @@ class QuarterMaster:
                 setattr(o, k, val[k])
             storage.upsert(o)
             resp.append(o)
+            await events_func(o)
         if resp.__len__() == 1:
             resp = resp[0]
         return resp
@@ -213,7 +305,7 @@ class QuarterMaster:
             if command.key is None:
                 raise ArithmeticError(f'Room does not exist anymore')
         if command.value is None:  # add or create an Invite object
-            secret = 'fdsfdsfds'  # fixme proper generation
+            secret = uuid.uuid5(uuid.NAMESPACE_OID, random.random().__str__()).__str__()
             invite = Invite(creator=command.auth.secret, secret=secret,
                             room=command.key if command.key is None else command.key.key(),
                             roommate=command.command_type == CommandType.roommate)
@@ -240,7 +332,12 @@ class QuarterMaster:
                         room.invited.append(command.auth.secret)
                 self._invites.delete_via_obj([invite])
             owner_name = self._users.search('secret', invite.creator)
-            return {'owner': owner_name, 'rooms': [q.name for q in rooms], 'status': 'roommate' if invite.roommate else 'guest'}
+            if owner_name.__len__() > 0:
+                owner_name = owner_name.pop().name
+            else:
+                owner_name = 'ERRNO'
+            return {'owner': owner_name, 'rooms': [q.name for q in rooms],
+                    'status': 'roommate' if invite.roommate else 'guest'}
 
     async def invite_clear(self, command, interface):
         invites = self._invites.search('creator', command.auth.secret)
@@ -306,18 +403,6 @@ class QuarterMaster:
                 room.roommates.pop(room.roommates.index(old_secret))
                 room.roommates.append(new_secret)
 
-
-
-
-
-
 if __name__ == '__main__':
     q = QuarterMaster()
-    # u1 = User(interface='telegram', interface_id=1, secret=uuid.uuid5(uuid.NAMESPACE_OID, '1'))
-    # u2 = User(interface='telegram', interface_id=2, secret=uuid.uuid5(uuid.NAMESPACE_OID, '2'))
-    # q._users.upsert(u1)
-    # q._users.upsert(u2)
-    # q._rooms.upsert(Room(interface='telegram', name='hello', interface_id=1, owner=u1.secret, address=''))
-    # c = Command(command_type=CommandType.merge, auth=u2, value=u1.secret.__str__())
-    # print(q.merge(c, 'telegram'))
     q.run()
