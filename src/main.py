@@ -7,7 +7,7 @@ from src.interfaces import Interface, run_interface
 from src.utility.command import Command, CommandType, Response
 from time import sleep, time
 from typing import Union
-from utility.storage import InMemory
+from utility.storage import InMemory, ShelveStorage
 from itertools import chain
 from src.model import User, Room, Invite, Guest
 from utility.config import Config
@@ -31,7 +31,8 @@ from utility.config import Config
                 * invite changes
                 * kicked
 """
-
+# todo: failure count
+# todo: destroy on failure number
 
 class QuarterMaster:
     def __init__(self):
@@ -47,10 +48,10 @@ class QuarterMaster:
             }
             self.interfaces[q]['process'].start()
         self.command_processors = {ct: getattr(self, ct.value) for ct in CommandType}
-        self._users = InMemory(User)
-        self._rooms = InMemory(Room)
-        self._invites = InMemory(Invite)
-        self._guests = InMemory(Guest)
+        self._users = ShelveStorage(User)
+        self._rooms = ShelveStorage(Room)
+        self._invites = ShelveStorage(Invite)
+        self._guests = ShelveStorage(Guest)
         self.waiting = {}
         self.__shutdown = False
 
@@ -62,7 +63,6 @@ class QuarterMaster:
         waiter.__next__()
         waiter.send(True)
         wait_time = 0
-        test = time()
         while not self.__shutdown:
             for i in self.interfaces:
                 if not self.interfaces[i]['receive_queue'].empty():
@@ -121,7 +121,6 @@ class QuarterMaster:
         return await asyncio.gather(*[self.room_events(room) for room in rooms])
 
     async def room_events(self, room):  # go over sync time, and kick, remove
-        print(f'Room event for {room}')
         if room.closed:  # closed room: all but the roommates and the owner are kicked
             searcher = lambda o: room.key() == o.room and o.user not in room.roommates and o.user != room.owner
         elif room.invited:
@@ -135,15 +134,15 @@ class QuarterMaster:
         guests = self._guests.search_func(searcher)
         guests_secrets = [q.user for q in guests]
         users = self._users.search_func(lambda o: o.secret in guests_secrets)
-        print(f'Users: {users} with ful base {self._users.search_func(lambda o: True)}')
         if users.__len__() == 0:
-            return
+            return True
         self._guests.delete_via_obj(guests)
         c = Command(command_type=CommandType.evict, key=room.interface_id, value=users)  # dispatch kick command
         resp = await self.dispatch_command(c, room.interface, awaiting=True)
         if resp.error:
             print(f'Failed to kick: {resp.error_message}')
-        return
+            return False
+        return True
 
     async def user_events(self, user):  # no user events yet.
         return

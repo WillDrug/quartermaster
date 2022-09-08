@@ -1,7 +1,7 @@
 from abc import ABCMeta, abstractmethod
 from typing import Union, Any, Iterable, Callable
 from src.model import KeyStored
-
+import shelve
 
 class Storage(metaclass=ABCMeta):
     @classmethod
@@ -94,6 +94,16 @@ class InMemory(Storage):
         for o in objs:
             del self.data[o.key()]
 
+
+
+
+class ShelveStorage(InMemory):
+    def __init__(self, cls_stored):
+        super().__init__(cls_stored)
+        self.data = shelve.open(f'data/{cls_stored.__name__.lower()}s')
+
+    def __del__(self):
+        self.data.close()
 
 if __name__ == '__main__':
     class IntStored(int, KeyStored):

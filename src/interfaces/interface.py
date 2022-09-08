@@ -31,7 +31,6 @@ class Interface(metaclass=ABCMeta):
         self.last_sync = time.time()
 
     async def process_command(self, command: Union[Command, Response]):
-        print(f'processing {command}')
         if isinstance(command, Response):
             if command.command_id in self.waiting:
                 if self.waiting[command.command_id] is None:
@@ -55,14 +54,12 @@ class Interface(metaclass=ABCMeta):
         pass
 
     def dispatch_command(self, command: Union[Command, Response, list], awaiting=True):  # asyncio bridge
-        print(f'Interface dispatching {command}')
         resp = self.loop.create_task(self._dispatch_command(command, awaiting=awaiting))
         while not resp.done():
             sleep(self.config.polling_delay)  # presuming 100% completion due to the timer inside
         return resp.result()
 
     async def _dispatch_command(self, command: Union[Command, Response, list], awaiting=True):
-        print(f'Sending {command}')
         if not isinstance(command, list):
             command = [command]
         for c in command:
