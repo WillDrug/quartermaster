@@ -105,7 +105,8 @@ class Telegram(Interface):
     """ BOT SECTION """
 
     def prepare_bot(self):
-        self.bot.message_handler(commands=['start', 'help'], func=self.is_private)(self.start_info_command)
+        self.bot.message_handler(commands=['start', 'info'], func=self.is_private)(self.start_info_command)
+        self.bot.message_handler(commands=['info'], func=self.is_public)(self.roominfo)
         self.bot.message_handler(commands=['secret'], func=self.is_private)(self.secret_command)
         self.bot.message_handler(commands=['manage'], func=self.is_public)(self.manage_command)
         self.bot.message_handler(commands=['editroom'])(self.editroom_command)
@@ -135,6 +136,10 @@ class Telegram(Interface):
         if event.old_chat_member.status != 'left' and event.new_chat_member.status == 'left':
             self._user_leaves(event.new_chat_member.user.id, event.chat.id)
         self.sync()
+
+    @with_auth
+    def roominfo(self, message):
+        return self.bot.send_message('Not implemented yet :(')
 
     def save_activity(self, message: telebot.types.Message):  # todo cache managed rooms
         self._save_activity(message.from_user.id, message.from_user.username, message.chat.id)
@@ -202,13 +207,17 @@ class Telegram(Interface):
         elif rooms.data.__len__() == 0:
             rooms = ""
         else:
-            rooms = '\n'.join(f"* {room.name} ({room.interface})" for room in rooms.data
-                              if room.owner == self.userbase.get(message.chat.id).interface_id)
-        self.bot.send_message(message.chat.id, f'You can manipulate your homes by name (invite link, locked\\unlocked, '
-                                               f'open\\closed, timeout), invite people, set people as roommates and'
-                                               f' stuff like that. Adding a home is done via a public channel.\n'
-                                               f'To sync different interfaces, use /secret (channel secret)\n'
-                                               f'Your rooms are:\n{rooms}')
+            rooms = '\n'.join(f"* {room.name} ({room.interface})" for room in rooms.data)
+        home = self.home(self.userbase.get(message.from_user.id))
+        if home.error:
+            return self.bot.send_message(message.chat.id, 'failed to fetch home')
+        self.bot.send_message(message.chat.id, f'Your home is set up. It is {"closed" if home.data.closed else "open"}\n'
+                                               f'It is also {"locked" if home.data.locked else "unlocked"}.\n'
+                                               f'Locking the home will require an invite within the bot.\n'
+                                               f'Closed home only allows roommates to be there.\n'
+                                               f'Timeout is {home.data.timeout}\n'
+                                               f'To see who you invited you can use /edit commands.\n'
+                                               f'Your rooms are: \n {rooms}')
 
     @with_auth
     def secret_command(self, message):
@@ -294,6 +303,8 @@ class Telegram(Interface):
                 markup.add(telebot.types.InlineKeyboardButton(text='Close',
                                                               callback_data='/edithome close'))
 
+            markup.add(telebot.types.InlineKeyboardButton(text='Set Timeout',
+                                                          callback_data='/edithome timeout'))
             markup.add(telebot.types.InlineKeyboardButton(text='Invite',
                                                           callback_data='/edithome invite'))
             markup.add(telebot.types.InlineKeyboardButton(text='Add roommate',
@@ -358,15 +369,23 @@ class Telegram(Interface):
             return self.editroom_recursive(auth, chat_id, rooms.data, room=room, original_message=original_message,
                                            callback_id=callback_id, public=public)
         if command == 'timeout':
-            try:
-                value = int(value)
-            except ValueError:
-                return self.bot.send_message(chat_id, 'timeout should be a number of seconds')
-            resp = self.edit(auth, "Home", {"key": home.key(), "timeout": value})
-            if resp.error:
-                return self.bot.send_message(chat_id, f'failed to set timeout: {resp.error_message}')
-            return self.edithome_recursive(auth, chat_id, public, resp.data, original_message=original_message,
-                                           callback_id=callback_id, callback_text='Timeout is set')
+            if value is None:
+                self.add_prompt(chat_id, auth.interface_id, self.edithome_recursive, (auth, chat_id, public, home),
+                                {'original_message': original_message, 'callback_id': callback_id,
+                                 'command': command}, 'value')
+                return self.bot.send_message(chat_id, f'Send me the new timeout')
+            else:
+                try:
+                    value = int(value)
+                except ValueError:
+                    if callback_id:
+                        self.bot.answer_callback_query(callback_id, 'Timeout failed to set')
+                    return self.bot.send_message(chat_id, 'timeout should be a number of seconds')
+                resp = self.edit(auth, "Home", {"key": home.key(), "timeout": value})
+                if resp.error:
+                    return self.bot.send_message(chat_id, f'failed to set timeout: {resp.error_message}')
+                return self.edithome_recursive(auth, chat_id, public, resp.data, original_message=original_message,
+                                               callback_id=callback_id, callback_text='Timeout is set')
         if command in ['invite', 'roommate']:
             if value is not None:
                 invite = self.invite(auth, value, can_use_invite=not public, roommate=command == 'roommate')
@@ -552,8 +571,12 @@ class Telegram(Interface):
                             {'command': command, 'room': room, 'original_message': original_message,
                              'callback_id': callback_id, 'public': public}, 'value')
             txt = f'Send me the new {command}'
+            if command == 'address':
+                txt += '; Use * to fetch the address from the interface'
             self.inline_menu(chat_id, text=txt, callback_id=callback_id, callback_text='Ready for the value.')
         else:
+            if command == 'address' and value == '*':
+                value = self.bot.get_chat(chat_id).invite_link
             edit = {
                 'key': room.key(),
                 command: value
@@ -591,7 +614,7 @@ class Telegram(Interface):
             return self.bot.reply_to(message, 'Error occured. I was waiting for something I do not know what')
         del self.state[(str(message.chat.id), str(message.from_user.id))]
 
-        kwargs[place] = re.sub(r'[^0-9a-zA-Z]+', '', message.text)
+        kwargs[place] = re.sub(r'[^0-9a-zA-Z\*]+', '', message.text)
 
         return func(*args, **kwargs)
 
@@ -635,6 +658,8 @@ class Telegram(Interface):
             room = room.pop()
             if cmd.__len__() > 1:
                 value = cmd[1]
+            else:
+                value = None
         return self.editroom_recursive(auth, message.chat.id, rooms, room=room,
                                        command=command, value=value, public=self.is_public(message))
 
