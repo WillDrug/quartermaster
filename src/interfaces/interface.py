@@ -141,6 +141,9 @@ class Interface(metaclass=ABCMeta):
         self.activity = {}
         return self.dispatch_command(Command(command_type=CommandType.sync, value=active), awaiting=False)
 
+    def home(self, auth):
+        return self.dispatch_command(Command(command_type=CommandType.home, auth=auth))
+
     def _save_activity(self, user_id, username, room_id):
         if room_id not in self.activity:
             self.activity[room_id] = {}
@@ -197,47 +200,46 @@ class Interface(metaclass=ABCMeta):
             raise KeyError(f'Edit command must contain key')
         return self.dispatch_command(Command(command_type=CommandType.edit, auth=auth, key=key, value=changes))
 
-    def invite(self, auth, username, rooms, room=None, can_use_invite=False, roommate=False):
+    def invite(self, auth, username, can_use_invite=False, roommate=False):
+        home = self.home(auth)
+        if home.error:
+            return home
+        home = home.data
         users = self.dispatch_command(Command(command_type=CommandType.users, key='name', value=username))
         if users.error:  # error'd
             return users
-        users = [q for q in users.data if q.interface == self.__class__.__name__]  # username in THIS interface
+        else:
+            users = users.data
+        if users.__len__() > 1:
+            users = [q for q in users.data if q.interface == self.__class__.__name__]  # username in THIS interface
         if users.__len__() != 1 and not can_use_invite:
             return Response(command_id=0, error=True, error_message='Did not manage to zero in on the user')
         elif users.__len__() != 1:
             invite = self.dispatch_command(Command(
                                                 command_type=CommandType.roommate if roommate else CommandType.invite,
                                                 auth=auth,
-                                                key=room if room is None else room.name
+                                                key=home
             ))
             return invite
         # got user, can add
-        if room is None:
-            commands = []
-            for room in rooms:
-                attr = room.roommates if roommate else room.invited
-                if users[0].secret not in attr:
-                    attr.append(users[0].secret)
-                commands.append({
-                                    'key': room.key(),
-                                    'roommates' if roommate else 'invited': attr
-                                })
-            resp = self.dispatch_command(Command(command_type=CommandType.edit, key='Room', value=commands))
-            return resp
+        user = users.pop()
+        if roommate:
+            res = home.roommates
         else:
-            attr = room.roommates if roommate else room.invited
-            if users[0].secret not in attr:
-                attr.append(users[0].secret)
-            return self.dispatch_command(Command(command_type=CommandType.edit, key='Room', value={
-                'key': room.key(),
-                'roommates' if roommate else 'invited': attr
-            }))
+            res = home.invited
+        if user.secret not in res:
+            res.append(user.secret)
+        resp = self.dispatch_command(Command(command_type=CommandType.edit, key='Home',
+                                             value={'key': home.key(),
+                                                    'roommates' if roommate else 'invited': res}))
+        return resp
+
 
     def use_invite(self, auth, secret):
         return self.dispatch_command(Command(command_type=CommandType.invite, key=None, value=secret, auth=auth))
 
-    def evict(self, auth, username, room=None):
-        return self.dispatch_command(Command(command_type=CommandType.evict, key=room.key(), value=username, auth=auth))
+    def evict(self, auth, username):
+        return self.dispatch_command(Command(command_type=CommandType.evict, value=username, auth=auth))
 
     def users(self, key, value):
         return self.dispatch_command(Command(command_type=CommandType.users, key=key, value=value))

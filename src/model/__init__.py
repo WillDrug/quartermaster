@@ -44,19 +44,23 @@ class User(pydantic.BaseModel, DoubleKeyStored):
             kwargs['secret'] = uuid5(NAMESPACE_OID, str(kwargs['interface_id']))
         super().__init__(**kwargs)
 
-
-class Room(pydantic.BaseModel, DoubleKeyStored):
-    name: str  # no spaces, daug
-    interface: str
-    interface_id: Union[int, str]
+class Home(pydantic.BaseModel, KeyStored):
     owner: pydantic.UUID5
-    address: str
     timeout: int = 7200
     invited: list[pydantic.UUID5] = []
     roommates: list[pydantic.UUID5] = []
     locked: bool = False  # requires invite
     closed: bool = False  # fuck off all
 
+    def key(self):
+        return self.owner.__str__()
+
+class Room(pydantic.BaseModel, DoubleKeyStored):
+    name: str  # no spaces, daug
+    interface: str
+    interface_id: Union[int, str]
+    address: str
+    owner: pydantic.UUID5
 
 class Guest(pydantic.BaseModel, DoubleKeyStored):
     dks_field1: typing.ClassVar[str] = 'user'
@@ -70,7 +74,7 @@ class Guest(pydantic.BaseModel, DoubleKeyStored):
 class Invite(pydantic.BaseModel, KeyStored):
     creator: pydantic.UUID5
     secret: str
-    room: Optional[str]  # room key
+    home: pydantic.UUID5
     in_chat: Optional[Union[str, int]]  # made for invites from inline to filter from - to only get one.
     roommate: bool = False
 

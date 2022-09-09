@@ -47,6 +47,8 @@ Public chat:
     
     
 """
+
+
 def master_only(func):
     @wraps(func)
     def check_master(self, message):
@@ -55,7 +57,9 @@ def master_only(func):
         if auth.key() not in self.config.master_ids:
             return
         return func(self, message)
+
     return check_master
+
 
 def with_permission(func):
     @wraps(func)
@@ -105,18 +109,20 @@ class Telegram(Interface):
         self.bot.message_handler(commands=['secret'], func=self.is_private)(self.secret_command)
         self.bot.message_handler(commands=['manage'], func=self.is_public)(self.manage_command)
         self.bot.message_handler(commands=['editroom'])(self.editroom_command)
+        self.bot.message_handler(commands=['edithome'])(self.edithome_command)
         self.bot.inline_handler(func=lambda query: True)(self.inline)
-        self.bot.callback_query_handler(lambda call: True)(self.editroom_command)
+        self.bot.callback_query_handler(lambda call: call.data.startswith('/editroom'))(self.editroom_command)
+        self.bot.callback_query_handler(lambda call: call.data.startswith('/edithome'))(self.edithome_command)
         self.handle = self.bot.get_me().username
         self.bot.message_handler(commands=['clearinvites'])(self.clearinvites_command)
-        self.bot.message_handler(commands=['invite', 'roommate', 'evict'])(self.inviteroommateevict_command)
-        # todo: make for-all-rooms commands change the defaults
-        self.bot.message_handler(commands=['lock', 'unlock', 'close', 'open', 'timeout'])(
-            self.lockunlockcloseopentimeout_command)
+        self.bot.message_handler(commands=[
+            'invite', 'roommate', 'evict', 'lock', 'unlock', 'close', 'open', 'timeout'
+        ])(self.edithome_single_command)
+        self.bot.message_handler(commands=['name', 'address'])(self.editroom_single_command)
         self.bot.message_handler(commands=['destroy'])(self.destroy_command)
         self.bot.message_handler(commands=['save'])(self.save_command)
         self.bot.message_handler(commands=['shutdown'])(self.shutdown_command)
-        # todo: send an invintation for an event for invited
+        # todo: send an invitation for an event for invited
         self.bot.message_handler(func=lambda message: not message.text.startswith('/') and
                                                       self.is_public(message))(self.save_activity)
         # todo: check on join if invited and shit
@@ -135,9 +141,9 @@ class Telegram(Interface):
 
     def inline(self, inline_query):
         res = [telebot.types.InlineQueryResultArticle('1', 'Invite via code',
-                                                   telebot.types.InputTextMessageContent(
-                                                       f'https://t.me/{self.handle}?start={inline_query.query}'
-                                                   ))]
+                                                      telebot.types.InputTextMessageContent(
+                                                          f'https://t.me/{self.handle}?start={inline_query.query}'
+                                                      ))]
         auth = self.auth(inline_query.from_user.id, inline_query.from_user.username)
         if not auth.error:
             rooms = self.get_own_rooms(auth.data, None)
@@ -151,7 +157,8 @@ class Telegram(Interface):
 
         self.bot.answer_inline_query(inline_query.id, res, cache_time=1)
 
-    def chat_type(self, message: Union[telebot.types.Message, telebot.types.CallbackQuery, telebot.types.ChatJoinRequest]):
+    def chat_type(self,
+                  message: Union[telebot.types.Message, telebot.types.CallbackQuery, telebot.types.ChatJoinRequest]):
         if isinstance(message, telebot.types.Message):
             chat_type = message.chat.type
         elif isinstance(message, telebot.types.ChatJoinRequest):
@@ -201,8 +208,7 @@ class Telegram(Interface):
                                                f'open\\closed, timeout), invite people, set people as roommates and'
                                                f' stuff like that. Adding a home is done via a public channel.\n'
                                                f'To sync different interfaces, use /secret (channel secret)\n'
-                                               f'Your rooms are:\n{rooms}'
-                                               f'\n Auth is {self.userbase.get(message.from_user.id).secret}')
+                                               f'Your rooms are:\n{rooms}')
 
     @with_auth
     def secret_command(self, message):
@@ -244,6 +250,186 @@ class Telegram(Interface):
 
     @with_auth
     @with_permission
+    def edithome_command(self, message: Union[telebot.types.CallbackQuery, telebot.types.Message]):
+        auth = self.userbase.get(message.from_user.id)
+        if isinstance(message, telebot.types.Message):
+            text = message.text
+            chat_id = message.chat.id
+            original_message = None
+            callback_id = None
+        else:
+            text = message.data
+            chat_id = message.message.chat.id
+            original_message = message.message.id
+            callback_id = message.id
+        cmd = text.split()
+        command = None
+        value = None
+        if cmd.__len__() > 1:
+            command = cmd[1]
+        if cmd.__len__() > 2:
+            value = cmd[2]
+        home = self.home(auth)
+        if home.error:
+            return self.bot.reply_to(message, f'Failed to get your home: {home.error_message}')
+        home = home.data
+        return self.edithome_recursive(auth, chat_id, self.is_public(message), home, command=command, value=value,
+                                       original_message=original_message, callback_id=callback_id)
+
+    def edithome_recursive(self, auth, chat_id, public, home, command=None, value=None, original_message=None,
+                           callback_id=None, callback_text=None):
+        # todo: add sync to /address
+        if command is None:
+            markup = telebot.types.InlineKeyboardMarkup(row_width=4)
+            if home.locked:
+                markup.add(telebot.types.InlineKeyboardButton(text='Unlock',
+                                                              callback_data='/edithome unlock'))
+            else:
+                markup.add(telebot.types.InlineKeyboardButton(text='Lock',
+                                                              callback_data='/edithome lock'))
+            if home.closed:
+                markup.add(telebot.types.InlineKeyboardButton(text='Open',
+                                                              callback_data='/edithome open'))
+            else:
+                markup.add(telebot.types.InlineKeyboardButton(text='Close',
+                                                              callback_data='/edithome close'))
+
+            markup.add(telebot.types.InlineKeyboardButton(text='Invite',
+                                                          callback_data='/edithome invite'))
+            markup.add(telebot.types.InlineKeyboardButton(text='Add roommate',
+                                                          callback_data='/edithome roommate'))
+            markup.add(telebot.types.InlineKeyboardButton(text='Evict',
+                                                          callback_data='/edithome evict'))
+            markup.add(telebot.types.InlineKeyboardButton(text=f'Edit Room{"s" if not public else ""}',
+                                                          callback_data='/edithome editroom'))
+            txt = 'Editing your home:'
+            if home.closed:
+                txt += '\nIt is closed to all but rommates.'
+            else:
+                txt += '\nIt is open '
+            if home.locked:
+                txt += 'but locked for everyone except invited' if not home.closed else ''
+            else:
+                txt += '\nIt is unlocked (no invite necessary)'
+            invited = self.users('secret', home.invited)
+            roommates = self.users('secret', home.roommates)
+            if invited.error:
+                invited = invited.error_message
+            else:
+                invited = ', '.join([q.name for q in invited.data])
+            if roommates.error:
+                roommates = roommates.error_message
+            else:
+                roommates = ', '.join([q.name for q in roommates.data])
+            txt += f'\nTimeout: {home.timeout} seconds'
+            txt += f'\nInvited: {invited}'
+            txt += f'\nRoommates: {roommates}'
+            return self.inline_menu(chat_id, text=txt, markup=markup, original_message=original_message,
+                                    callback_id=callback_id, callback_text=callback_text)
+        # command can be /lock /unlock /close /open /timeout /invite /roommate /evict -- done via /edithome or /single
+        # for rooms leave /name /address /destroy and the same from /editroom (menu)
+        if command in ['lock', 'unlock', 'open', 'close']:
+            edit = {
+                'lock': {'locked': True},
+                'unlock': {'locked': False},
+                'open': {'closed': False},
+                'close': {'closed': True}
+            }.get(command)
+            edit['key'] = home.key()
+            resp = self.edit(auth, 'Home', edit)
+            if resp.error:
+                return self.bot.send_message(chat_id, f'Failed to edit the room: {resp.error_message}')
+            if original_message:
+                return self.edithome_recursive(auth, chat_id, public, resp.data, original_message=original_message,
+                                               callback_id=callback_id, callback_text=f'Home: {command} OK')
+            else:
+                return self.bot.send_message(chat_id, 'Done')
+        if command == 'editroom':
+            rooms = self.get_own_rooms(auth, None)
+            if rooms.error:
+                return self.bot.send_message(chat_id, f'Failed to get rooms: {rooms.error_message}')
+            if public:
+                room = [q for q in rooms.data if q.interface_id == chat_id]
+                if room.__len__() == 0:
+                    return self.bot.send_message(chat_id, 'This room is not managed, use private.')
+                room = room.pop()
+            else:
+                room = None
+            return self.editroom_recursive(auth, chat_id, rooms.data, room=room, original_message=original_message,
+                                           callback_id=callback_id, public=public)
+        if command == 'timeout':
+            try:
+                value = int(value)
+            except ValueError:
+                return self.bot.send_message(chat_id, 'timeout should be a number of seconds')
+            resp = self.edit(auth, "Home", {"key": home.key(), "timeout": value})
+            if resp.error:
+                return self.bot.send_message(chat_id, f'failed to set timeout: {resp.error_message}')
+            return self.edithome_recursive(auth, chat_id, public, resp.data, original_message=original_message,
+                                           callback_id=callback_id, callback_text='Timeout is set')
+        if command in ['invite', 'roommate']:
+            if value is not None:
+                invite = self.invite(auth, value, can_use_invite=not public, roommate=command == 'roommate')
+                if invite.error:
+                    return self.bot.send_message(chat_id, f'Failed: {invite.error_message}')
+                if isinstance(invite.data, Invite):
+                    markup = telebot.types.InlineKeyboardMarkup()
+                    markup.add(telebot.types.InlineKeyboardButton('Send an invite', switch_inline_query=Invite.secret.__str__()))
+                    return self.bot.send_message(chat_id, f'Invite created which you can use', markup=markup)
+                else:
+                    if original_message is not None:
+                        return self.edithome_recursive(auth, chat_id, public, home, original_message=original_message,
+                                                       callback_id=callback_id, callback_text='User invited.')
+                    else:
+                        return self.bot.send_message(chat_id, 'Invited.')
+            else:
+                self.add_prompt(chat_id, auth.interface_id, self.edithome_recursive, (auth, chat_id, public, home),
+                                {'original_message': original_message, 'callback_id': callback_id,
+                                 'command': command}, 'value')
+                return self.bot.send_message(chat_id,
+                    f'Send me a username. {"Use private chat to get a sendable invite" if public else ""}')
+
+        if command == 'evict':
+            if value is None:  # todo: make evict from roommates or invited specifically possible
+                secrets = home.roommates+home.invited
+                users = self.users('secret', secrets)
+                if users.error:
+                    return self.bot.send_message(chat_id, f'Failed to fetch users: {users.error_message}')
+                # clean usernames to this interface if exist:
+                d = {}
+                for user in users.data:
+                    if user.secret.__str__() not in d:
+                        d[user.secret.__str__()] = user
+                    if user.interface == self.__class__.__name__:
+                        d[user.secret.__str__()] = user
+                users = [d[k] for k in d]
+                markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+                for user in users:
+                    markup.add(telebot.types.InlineKeyboardButton(user.name, callback_data=f'/edithome evict {user.name}'))
+                markup.add(telebot.types.InlineKeyboardButton('Back', callback_data=f'/edithome'))
+                return self.inline_menu(chat_id, text='Choose a user to evict', markup=markup,
+                                        original_message=original_message,
+                                        callback_id=callback_id, callback_text=callback_text)
+            else:
+                resp = self.evict(auth, value)
+                if resp.error:
+                    self.bot.send_message(chat_id, f'Failed to evict: {resp.error_message}')
+                home = self.home(auth)
+                if home.error:
+                    return self.bot.send_message(f'User was evicted but I failed to fetch your home: {home.error_message}')
+                else:
+                    home = home.data
+                if original_message is not None:
+                    return self.edithome_recursive(auth, chat_id, public, home, command=command,
+                                                   original_message=original_message, callback_id=callback_id,
+                                                   callback_text='User evicted')
+                else:
+                    return self.bot.send_message(chat_id, 'Evicted.')
+
+        return self.bot.send_message(chat_id, 'Command unknown')
+
+    @with_auth
+    @with_permission
     def editroom_command(self, message: Union[telebot.types.CallbackQuery, telebot.types.Message]):
         auth = self.userbase.get(message.from_user.id)
         if isinstance(message, telebot.types.Message):
@@ -261,8 +447,8 @@ class Telegram(Interface):
         value = None
         cmd = text.split()
         if cmd.__len__() == 2 and cmd[1] == 'done':
-            return self.editroom_menu(chat_id, 'Editing finished.', markup=None, original_message=original_message,
-                                      callback_id=callback_id)
+            return self.inline_menu(chat_id, 'Editing finished.', markup=None, original_message=original_message,
+                                    callback_id=callback_id)
         private = self.is_private(message)
         rooms = self.get_own_rooms(self.userbase.get(message.from_user.id), None)  # fixme cache
         if rooms.error:
@@ -301,15 +487,18 @@ class Telegram(Interface):
                            original_message=None, callback_id=None, public=False):
         # if room is None -> present choices
         if command == 'done':
-            return self.editroom_menu(chat_id, 'Editing finished', original_message=original_message,
-                                      callback_id=callback_id)
+            return self.inline_menu(chat_id, 'Editing finished', original_message=original_message,
+                                    callback_id=callback_id)
         if room is None:
             markup = telebot.types.InlineKeyboardMarkup(row_width=4)  # fixme markup row()
             for room in rooms.data:
                 markup.add(
                     telebot.types.InlineKeyboardButton(text=room.name, callback_data=f'/editroom {room.name}'))
-            return self.editroom_menu(chat_id, 'Choose a room to edit', original_message=original_message,
-                                      markup=markup, callback_id=callback_id)
+                markup.add(
+                    telebot.types.InlineKeyboardButton(text='Edit Home', callback_data=f'/edithome')
+                )
+            return self.inline_menu(chat_id, 'Choose a room to edit', original_message=original_message,
+                                    markup=markup, callback_id=callback_id)
 
         if isinstance(room, str):
             room_f = [q for q in rooms.data if q.name == room]
@@ -318,64 +507,23 @@ class Telegram(Interface):
             room = room_f.pop()
         if command is None:
             markup = telebot.types.InlineKeyboardMarkup(row_width=4)
-            if room.locked:
-                markup.add(telebot.types.InlineKeyboardButton(text='Unlock',
-                                                              callback_data=self.get_editroom_command(public, room,
-                                                                                                      'unlock')))
-            else:
-                markup.add(telebot.types.InlineKeyboardButton(text='Lock',
-                                                              callback_data=self.get_editroom_command(public, room,
-                                                                                                      'lock')))
-            if room.closed:
-                markup.add(telebot.types.InlineKeyboardButton(text='Open',
-                                                              callback_data=self.get_editroom_command(public, room,
-                                                                                                      'open')))
-            else:
-                markup.add(telebot.types.InlineKeyboardButton(text='Close',
-                                                              callback_data=self.get_editroom_command(public, room,
-                                                                                                      'close')))
-
             markup.add(telebot.types.InlineKeyboardButton(text='Set Name',
                                                           callback_data=self.get_editroom_command(public, room,
                                                                                                   'name')))
             markup.add(telebot.types.InlineKeyboardButton(text='Set Address',
                                                           callback_data=self.get_editroom_command(public, room,
                                                                                                   'address')))
-            markup.add(telebot.types.InlineKeyboardButton(text='Change Timeout',
-                                                          callback_data=self.get_editroom_command(public, room,
-                                                                                                  'timeout')))
-            if room.locked:
-                markup.add(telebot.types.InlineKeyboardButton(text='Invite',
-                                                              callback_data=self.get_editroom_command(public, room,
-                                                                                                      'invite')))
-            markup.add(telebot.types.InlineKeyboardButton(text='Add roommate',
-                                                          callback_data=self.get_editroom_command(public, room,
-                                                                                                  'roommate')))
-            markup.add(telebot.types.InlineKeyboardButton(text='Evict',
-                                                          callback_data=self.get_editroom_command(public, room,
-                                                                                                  'evict')))
             markup.add(telebot.types.InlineKeyboardButton(text='DESTROY',
                                                           callback_data=self.get_editroom_command(public, room,
                                                                                                   'destroy')))
             if not public:
-                markup.add(telebot.types.InlineKeyboardButton(text='Back', callback_data=f'/editroom'))
-            room_info = f"Name: {room.name}\nTimeout: {room.timeout}\nAddress: {room.address}\n"
-            if room.locked:
-                invited = self.users('secret', room.invited)
-                if invited.error:
-                    invited = f"Failed to get: {invited.error_message}"
-                else:
-                    invited = ', '.join([q.name for q in invited.data])
-                room_info += f"Invited: {invited}\n"
-            mates = self.users('secret', room.roommates)
-            if mates.error:
-                mates = f"Failed to get: {mates.error_message}"
+                markup.add(telebot.types.InlineKeyboardButton(text='Choose Room', callback_data=f'/editroom'))
             else:
-                mates = ', '.join([q.name for q in mates.data])
-            room_info += f"Roommates: {mates}"
-            txt = f'Editing {room.name}\n{room_info}\nChoose an attribute to edit'
-            return self.editroom_menu(chat_id, txt, markup=markup, original_message=original_message,
-                                      callback_id=callback_id)
+                markup.add(telebot.types.InlineKeyboardButton(text='Edit Home', callback_data=f'/edithome'))
+            room_info = f"Name: {room.name}\nAddress: {room.address}\nChoose an edit"
+
+            return self.inline_menu(chat_id, room_info, markup=markup, original_message=original_message,
+                                    callback_id=callback_id)
 
         if command == 'destroy':
             if value is None:
@@ -397,138 +545,38 @@ class Telegram(Interface):
             else:
                 return self.bot.send_message(chat_id, 'good.')
 
-        edit = {
-            'lock': {'locked': True},
-            'unlock': {'locked': False},
-            'open': {'closed': False},
-            'close': {'closed': True}
-        }.get(command)
-        if edit is None and command not in ['name', 'address', 'timeout', 'invite', 'roommate', 'evict']:
-            return self.bot.send_message(chat_id, f'{command} is not something you can do with a room')
-
-        if edit is not None:
-            edit['key'] = room.key()
-            resp = self.edit(auth, 'Room', edit)
-            if resp.error:
-                return self.bot.send_message(chat_id, f'Failed to edit the room: {resp.error_message}')
-            if original_message is not None:
-                return self.editroom_recursive(auth, chat_id, rooms, room=resp.data if public else resp.data.name,
-                                               command=None, value=None, original_message=original_message,
-                                               public=public)
-            else:
-                return self.editroom_menu(chat_id, 'Success', callback_id=callback_id)
-
-        assert command in ['name', 'address', 'timeout', 'invite', 'roommate', 'evict']
+        assert command in ['name', 'address']
 
         if value is None:  # requires a prompt
-            if command == 'evict':
-                guests = [q for q in room.invited + room.roommates]
-                guests = self.users('secret', guests)
-                if guests.error:
-                    if callback_id is not None:
-                        return self.bot.answer_callback_query(callback_id,
-                                                              f"Failed to get users in rooms: {guests.error_message}")
-                guests = guests.data
-                markup = telebot.types.InlineKeyboardMarkup(row_width=3)
-                for guest in guests:
-                    markup.add(telebot.types.InlineKeyboardButton(text=guest.name,
-                                                                  callback_data=self.get_editroom_command(
-                                                                      public, room=room, command='evict',
-                                                                      value=guest.name)
-                                                                  )
-                               )
-                markup.add(telebot.types.InlineKeyboardButton(text='Back',
-                                                              callback_data=self.get_editroom_command(public, room=room)
-                                                              )
-                           )
-                return self.editroom_menu(chat_id, 'Choose a user to evict', markup=markup,
-                                          original_message=original_message, callback_id=callback_id)
             self.add_prompt(chat_id, auth.interface_id, self.editroom_recursive, (auth, chat_id, rooms),
                             {'command': command, 'room': room, 'original_message': original_message,
-                             'callback_id': callback_id,
-                             'public': public}, 'value')
-            pr = command if command in ['name', 'address', 'timeout'] else f'username to {command}'
-            txt = f'Send me the {pr}'
-            if command in ['invite', 'roommate'] and public:
-                txt += '\n or better yet, use private chat.'
-            self.bot.send_message(chat_id, txt)
+                             'callback_id': callback_id, 'public': public}, 'value')
+            txt = f'Send me the new {command}'
+            self.inline_menu(chat_id, text=txt, callback_id=callback_id, callback_text='Ready for the value.')
         else:
-            if command == 'timeout':
-                try:
-                    value = int(value)
-                except ValueError:
-                    return self.bot.send_message(chat_id, 'timeout should be a number of seconds')
-            elif command == 'evict':  # todo: evict as inline keyboard. todo: inline mode invites.
-                resp = self.evict(auth, value, room=room)
-                if resp.error:
-                    return self.bot.send_message(chat_id, f'Failed to evict: {resp.error_message}')
-                self.bot.send_message(chat_id, f'{value} evicted')
-                if callback_id is not None:
-                    self.bot.answer_callback_query(callback_id, f'{value} evicted')
-                    rooms = self.get_own_rooms(auth, None)
-                    if rooms.error:
-                        return self.bot.send_message(chat_id, f'Failed to get rooms: {rooms.error_message}')
-                    rooms = rooms.data
-                    room = [q for q in rooms if q.key() == room.key()]
-                    if room.__len__() == 0:
-                        return self.bot.send_message(chat_id, 'What the...')
-                    room = room[0]
-                    return self.editroom_recursive(auth, chat_id, rooms, room=room, command='evict',
-                                                   value=None, original_message=original_message,
-                                                   callback_id=callback_id, public=public)
-                else:
-                    return
-            elif command in ['invite', 'roommate']:
-                resp = self.invite(auth, value, rooms, room=room, can_use_invite=not public,
-                                   roommate=command == 'roommate')
-                if resp.error:
-                    return self.bot.send_message(chat_id, f'Failed to {command}: {resp.error_message}')
-                if isinstance(resp.data, Invite):
-                    markup = telebot.types.InlineKeyboardMarkup()
-                    markup.add(telebot.types.InlineKeyboardButton('Send invite', switch_inline_query=resp.data.secret))
-                    return self.bot.send_message(chat_id, f'Use the send button to invite any user to '
-                                                          f'{"" if room is None else f"to room {room.name}"}',
-                                                 reply_markup=markup)
-                if original_message is not None:
-                    rooms = self.get_own_rooms(auth, None)
-                    if rooms.error:
-                        return self.bot.send_message(chat_id, 'Something went wrong tryign to update rooms:'
-                                                     + rooms.error_message)
-                    rooms = rooms.data
-                    room = [q for q in rooms if q.key() == room.key()]
-                    if room.__len__() == 0:
-                        return self.bot.send_message(chat_id, 'Something went terribly wrong D:')
-                    room = room[0]
-                    if callback_id is not None:
-                        self.bot.answer_callback_query(callback_id, f'{value} got {command}ed')
-                    return self.editroom_recursive(auth, chat_id, rooms, room=room, command=None,
-                                                   value=None, original_message=original_message,
-                                                   callback_id=callback_id, public=public)
-                return self.bot.send_message(chat_id, f'{value} got {command}ed!')
-
             edit = {
                 'key': room.key(),
                 command: value
             }
             r = self.edit(auth, 'Room', edit)
+            if r.error:
+                return self.bot.send_message(chat_id, f'Failed to update: {r.error_message}')
             if original_message is not None:
-                if callback_id is not None:
-                    self.bot.answer_callback_query(callback_id, f'Change ({command}) OK')
-                rooms = self.get_own_rooms(auth, None)
-                return self.editroom_recursive(auth, chat_id, rooms, room=r.data if public else r.data.name,
-                                               command=None if command != 'evict' else 'evict', public=public,
-                                               value=None, original_message=original_message)
+                return self.editroom_recursive(auth, chat_id, rooms, room=r.data,
+                                               command=None, public=public, value=None,
+                                               original_message=original_message, callback_id=callback_id)
             else:
-                return self.editroom_menu(chat_id, 'Success', callback_id=callback_id)
+                return self.inline_menu(chat_id, 'Success')
 
-    def editroom_menu(self, chat_id, text, markup=None, original_message=None, callback_id=None):
+    def inline_menu(self, chat_id, text=None, markup=None, original_message=None, callback_id=None, callback_text='Ok',
+                    command='/editroom'):
         if callback_id is not None:
-            self.bot.answer_callback_query(callback_id, 'Ok')
+            self.bot.answer_callback_query(callback_id, callback_text)
         if markup is not None:
-            markup.add(telebot.types.InlineKeyboardButton(text='Done', callback_data='/editroom done'))
-        if original_message is None:
+            markup.add(telebot.types.InlineKeyboardButton(text='Done', callback_data=f'{command} done'))
+        if original_message is None and text is not None:
             self.bot.send_message(chat_id, text, reply_markup=markup)
-        else:
+        elif text is not None:
             self.bot.edit_message_text(text, chat_id, original_message, reply_markup=markup)
 
     def add_prompt(self, chat_id, interface_id, func, args, kwargs, field):
@@ -548,88 +596,52 @@ class Telegram(Interface):
         return func(*args, **kwargs)
 
     @with_auth
-    @with_permission
-    def inviteroommateevict_command(self, message):
+    def edithome_single_command(self, message):
+        auth = self.userbase.get(message.from_user.id)
+        home = self.home(auth)
+        if home.error:
+            return self.bot.reply_to(message, f'Failed to find your home: {home.error_message}')
+        else:
+            home = home.data
         cmd = message.text.split()
         if cmd.__len__() == 1:
             value = None
         else:
             value = cmd[1]
         cmd = cmd[0][1:]
-        if self.is_public(message):
-            auth = self.userbase.get(message.from_user.id)
-            rooms = self.get_own_rooms(self.userbase.get(message.from_user.id), None)  # fixme cache
-            if rooms.error:
-                return self.bot.send_message(message.chat.id, 'Failed to get rooms: ' + rooms.error_message)
-            room = [q for q in rooms.data if q.interface_id == message.chat.id]
-            if room.__len__() == 0:
-                return self.bot.send_message(message.chat.id, 'This room is not managed')
-            room = room[0]
-            return self.editroom_recursive(auth, message.chat.id, rooms, room=room, command=cmd,
-                                           value=value, original_message=None, public=True)
-        return self.inviteroommateevict_command_recursive(message.chat.id, cmd, username=value)
-
-    def inviteroommateevict_command_recursive(self, chat_id, command, username=None):
-        if username is None:
-            self.add_prompt(chat_id, chat_id, self.inviteroommateevict_command_recursive, (chat_id, command), {},
-                            'username')
-            return self.bot.send_message(chat_id, f'Send me a username to {command}')
-        auth = self.userbase.get(chat_id)
-        rooms = self.get_own_rooms(auth, None)
-        if rooms.error:
-            return self.bot.send_message(chat_id, f'Failed to fetch rooms: {rooms.error_message}')
-        if rooms.data.__len__() == 0:
-            return self.bot.send_message(chat_id, f'No rooms you own')
-        invite = self.invite(auth, username, rooms.data, can_use_invite=True, roommate=command == 'roommate')
-        if invite.error:
-            return self.bot.send_message(chat_id, f'Failed to {command}: {invite.error_message}')
-        if isinstance(invite.data, Invite):
-            markup = telebot.types.InlineKeyboardMarkup()
-            markup.add(telebot.types.InlineKeyboardButton('Send invite', switch_inline_query=invite.data.secret))
-            return self.bot.send_message(chat_id, f'Use the send button to invite any user to your home',
-                                         reply_markup=markup)
-        return self.bot.send_message(chat_id, f'{username} {command}ed, ye.')
+        return self.edithome_recursive(auth, message.chat.id, self.is_public(message), home, command=cmd, value=value)
 
     @with_auth
-    def lockunlockcloseopentimeout_command(self, message):
-        cmd = message.text.split()
-        if cmd.__len__() == 1:
-            value = None
-        else:
-            value = cmd[1]
-        cmd = cmd[0][1:]
-        rooms = self.get_own_rooms(self.userbase.get(message.from_user.id), None)  # fixme cache
+    @with_permission
+    def editroom_single_command(self, message):
         auth = self.userbase.get(message.from_user.id)
-        if self.is_public(message):
-            if rooms.error:
-                return self.bot.send_message(message.chat.id, 'Failed to get rooms: ' + rooms.error_message)
+        rooms = self.get_own_rooms(auth, None)
+        if rooms.error:
+            return self.bot.send_message(message.chat.id, f'Failed to get rooms: {rooms.error_message}')
+        room = None
+        cmd = message.text.split()
+        command = cmd[0][1:]
+        if self.is_private(message):
+            if cmd.__len__() == 1:
+                return self.bot.send_message(message.chat.id, 'Please specify a room name')
+            room = cmd[1]
+            value = None
+            if cmd.__len__() > 2:
+                value = cmd[2]
+        else:
             room = [q for q in rooms.data if q.interface_id == message.chat.id]
             if room.__len__() == 0:
-                return self.bot.send_message(message.chat.id, 'This room is not managed')
-            room = room[0]
-            return self.editroom_recursive(auth, message.chat.id, rooms, room=room, command=cmd,
-                                           value=value, original_message=None, public=True)
-        else:
-            key = cmd
-            if cmd in ['lock', 'unlock']:
-                key = 'locked'
-            if cmd in ['open', 'close']:
-                key = 'closed'
-            if cmd in ['open', 'unlock']:
-                value = False
-            if cmd in ['close', 'lock']:
-                value = True
-            if key == 'timeout':
-                try:
-                    value = int(value)
-                except ValueError:
-                    return self.bot.send_message(message.chat.id, 'Timeout should be a number of seconds')
-            e = [{'key': q.key(), key: value} for q in rooms.data]
-            resp = self.edit(auth, 'Room', e)
-            if resp.error:
-                return self.bot.send_message(message.chat.id, f'Failed to {cmd}: {resp.error_message}')
-            return self.bot.send_message(message.chat.id, f'Your home got {cmd}ed')
+                return self.bot.send_message(message.chat.id, f'This room is not managed')
+            room = room.pop()
+            if cmd.__len__() > 1:
+                value = cmd[1]
+        return self.editroom_recursive(auth, message.chat.id, rooms, room=room,
+                                       command=command, value=value, public=self.is_public(message))
 
+
+
+    @with_auth
+    @with_permission
     def destroy_command(self, message):
         auth = self.userbase.get(message.from_user.id)
         rooms = self.get_own_rooms(auth, None)
@@ -643,7 +655,7 @@ class Telegram(Interface):
             return self.editroom_recursive(auth, message.chat.id, rooms, room=room, command='destroy', public=True)
         cmd = message.text.split()
         if cmd.__len__() == 1:
-            self.bot.send_message(message.chat.id, 'Send DESTROY to confirm.')
+            self.bot.send_message(message.chat.id, 'Send DESTROY to confirm.\n<b>WARNING</b>: This will delete everything.')
             return self.add_prompt(message.chat.id, message.chat.id, self.destroy_confirm,
                                    (auth, message.chat.id), {}, 'confirm')
         elif cmd.__len__() == 2:
@@ -670,6 +682,7 @@ class Telegram(Interface):
 
     """ BOT SECTION END """
     """ EVENT SECTION """
+
     async def local_users(self, command):
         try:
             chat = self.bot.get_chat(command.key.interface_id)
@@ -688,6 +701,7 @@ class Telegram(Interface):
         for user in command.value:
             self.bot.kick_chat_member(chat.id, user.interface_id)
         return Response(command_id=command.command_id, data=True)
+
     """ EVENT SECTION END """
 
     def initialize(self):
@@ -702,6 +716,7 @@ class Telegram(Interface):
 if __name__ == '__main__':
     from multiprocessing import Queue
     from src.utility.config import Config
+
     t = Telegram(Queue(), Queue(), Config())
     t.bot.get_chat(391834833310)
-    #t.run()
+    # t.run()

@@ -74,7 +74,7 @@ class InMemory(Storage):
         return self.data.get(cid)
 
     def upsert(self, new_obj: KeyStored) -> None:
-        assert isinstance(new_obj, KeyStored), f'{new_obj} is not of type {self.cls_stored}'
+        assert isinstance(new_obj, KeyStored), f'{new_obj} is not of type {self.cls_stored} or subclass of KeyStored'
 
         self.data[new_obj.key()] = new_obj
 
@@ -98,17 +98,21 @@ class InMemory(Storage):
 
 
 class ShelveStorage(InMemory):
-    def __init__(self, cls_stored):
+    def __init__(self, cls_stored, path='data/'):
         super().__init__(cls_stored)
-        self.data = shelve.open(f'data/{cls_stored.__name__.lower()}s')
+        self.data = shelve.open(f'{path}{cls_stored.__name__.lower()}s')
 
     def __del__(self):
         self.data.close()
 
 if __name__ == '__main__':
-    class IntStored(int, KeyStored):
+    class Mut(KeyStored):
+        def __init__(self, a, b):
+            self.a = a
+            self.b = b
+
         def key(self):
-            return self
-    m = InMemory(IntStored)
-    m.upsert(IntStored(5))
-    print(m.search_func(lambda o: True)[0].key())
+            return str(self.a)
+
+    m = ShelveStorage(Mut, path='')
+    print(m.get('1').b)

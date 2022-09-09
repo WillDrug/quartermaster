@@ -22,9 +22,11 @@ class CommandType(Enum):
     sync = 'sync'  # no auth, value: user_ids: time
     join = 'join'
     leave = 'leave'
+    home = 'home'
 
 
-auth_required = ['rooms', 'merge', 'destroy', 'create', 'edit', 'invite', 'roommate', 'evict']  # shutdown?
+auth_required = ['home', 'rooms', 'merge', 'destroy', 'create', 'edit', 'invite', 'roommate', 'evict',
+                 'invite', 'invite_clear']  # shutdown?
 
 
 class Command(pydantic.BaseModel):
