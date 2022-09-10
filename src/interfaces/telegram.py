@@ -95,13 +95,13 @@ def with_auth(func):
 
 
 class Telegram(Interface):
-    def __init__(self, send_queue, receive_queue, *args, **kwargs):
-        token = "1241832787:AAH2FDmx28_5KG7oKKuJrceKk8Hq38MD-iY"
+    def __init__(self, send_queue, receive_queue, config, *args, **kwargs):
+        token = config.telegram_auth
         self.bot = telebot.TeleBot(token, parse_mode='HTML')
         self.prepare_bot()
         self.userbase = {}
         self.state = {}
-        super().__init__(send_queue, receive_queue, *args, **kwargs)
+        super().__init__(send_queue, receive_queue, config, *args, **kwargs)
 
     """ BOT SECTION """
 
@@ -561,7 +561,7 @@ class Telegram(Interface):
         value = None
         cmd = text.split()
         if cmd.__len__() == 2 and cmd[1] == 'done':
-            return self.inline_menu(chat_id, 'Editing finished.', markup=None, original_message=original_message,
+            return self.inline_menu(chat_id, 'Inline menu closed.', markup=None, original_message=original_message,
                                     callback_id=callback_id)
         private = self.is_private(message)
         rooms = self.get_own_rooms(self.userbase.get(message.from_user.id), None)  # fixme cache

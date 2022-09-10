@@ -1,4 +1,5 @@
 from time import time
+from os import getenv
 
 class Config:
     delay_times = [0, 0.1, 0.5, 1, 3, 5]
@@ -8,6 +9,7 @@ class Config:
     polling_delay = 1
     sync_delay = 30
     master_ids = ['Telegram391834810']
+    telegram_auth = ''
 
     def delay_counter(self):
         idx = 0
@@ -23,3 +25,8 @@ class Config:
                         idx = i
                     else:
                         break
+
+    def __init__(self):
+        for attr in self.__dir__():  # you can break this by overriding a dunder method. don't do that.
+            if getenv(attr):  # fixme: do a better job here
+                setattr(self, attr, getenv(attr))
