@@ -7,10 +7,10 @@ from src.model import User
 
 class CommandType(Enum):
     shutdown = 'shutdown'
-    save = 'save'
     auth = 'auth'    # auth = None
     rooms = 'rooms'  # auth: owner\invited\roommate, key: attribute, value: search term
     users = 'users'  # same shit   # interface-bound: key room id, value expected count. response list of users in room
+    homes = 'homes'
     merge = 'merge'  # auth: requesting user, value: secret; follows the same rules everywhere.
     destroy = 'destroy'  # auth: requesting, key: room or None
     create = 'create'  # auth: owner, key: class, value: dict for class creation
@@ -22,7 +22,6 @@ class CommandType(Enum):
     sync = 'sync'  # no auth, value: user_ids: time
     join = 'join'
     leave = 'leave'
-    home = 'home'
 
 
 auth_required = ['home', 'rooms', 'merge', 'destroy', 'create', 'edit', 'invite', 'roommate', 'evict',

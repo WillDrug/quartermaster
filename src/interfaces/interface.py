@@ -142,7 +142,7 @@ class Interface(metaclass=ABCMeta):
         return self.dispatch_command(Command(command_type=CommandType.sync, value=active), awaiting=False)
 
     def home(self, auth):
-        return self.dispatch_command(Command(command_type=CommandType.home, auth=auth))
+        return self.dispatch_command(Command(command_type=CommandType.homes, auth=auth, value=True))
 
     def _save_activity(self, user_id, username, room_id):
         if room_id not in self.activity:
@@ -160,6 +160,18 @@ class Interface(metaclass=ABCMeta):
     def auth(self, user_id, user_name):
         command = Command(command_type=CommandType.auth, key=user_id, value=user_name)
         return self.dispatch_command(command, awaiting=True)
+
+    def get_visible_homes(self, auth):
+        return self.dispatch_command(Command(command_type=CommandType.homes, auth=auth))
+
+    def get_current_home(self, auth, interface_id):
+        return self.dispatch_command(Command(command_type=CommandType.homes, auth=auth, value=interface_id))
+
+    def get_home(self, auth, home_id):
+        return self.dispatch_command(Command(command_type=CommandType.homes, auth=auth, key='owner', value=home_id))
+
+    def get_home_rooms(self, auth, home):  # auth to run
+        return self.dispatch_command(Command(command_type=CommandType.rooms, key=None, value=home, auth=auth))
 
     def get_own_rooms(self, auth, name):
         """

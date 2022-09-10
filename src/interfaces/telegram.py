@@ -1,5 +1,6 @@
 import asyncio
 import time
+import uuid
 
 from src.interfaces.interface import Interface
 import telebot
@@ -105,8 +106,7 @@ class Telegram(Interface):
     """ BOT SECTION """
 
     def prepare_bot(self):
-        self.bot.message_handler(commands=['start', 'info'], func=self.is_private)(self.start_info_command)
-        self.bot.message_handler(commands=['info'], func=self.is_public)(self.roominfo)
+        self.bot.message_handler(commands=['start'], func=self.is_private)(self.start_command)
         self.bot.message_handler(commands=['secret'], func=self.is_private)(self.secret_command)
         self.bot.message_handler(commands=['manage'], func=self.is_public)(self.manage_command)
         self.bot.message_handler(commands=['editroom'])(self.editroom_command)
@@ -128,6 +128,101 @@ class Telegram(Interface):
                                                       self.is_public(message))(self.save_activity)
         # todo: check on join if invited and shit
         self.bot.chat_member_handler()(self.chat_member_event)
+        self.bot.message_handler(commands=['info'])(self.info)
+        self.bot.callback_query_handler(lambda call: call.data.startswith('/rooms'))(self.show_home_rooms)
+        self.bot.message_handler(commands=['rooms'])(self.show_home_rooms)
+        self.bot.callback_query_handler(lambda call: call.data.startswith('/homes'))(self.show_homes)
+        self.bot.message_handler(commands=['homes'], func=self.is_private)(self.show_homes)
+        self.bot.message_handler()
+
+    def info(self, message):
+        if self.is_public(message):
+            return self.show_home_rooms(message)
+        else:
+            return self.show_homes(message)
+
+    @with_auth
+    def show_home_rooms(self, message):
+        if isinstance(message, telebot.types.Message):
+            text = message.text
+            chat_id = message.chat.id
+            original_message = None
+            callback_id = None
+        else:
+            text = message.data
+            chat_id = message.message.chat.id
+            original_message = message.message.id
+            callback_id = message.id
+        user_id = message.from_user.id
+        auth = self.userbase.get(user_id)
+        if self.is_public(message):
+            home = self.get_current_home(auth, chat_id)
+        else:
+            cmd = text.split()
+            if cmd.__len__() == 1:
+                return self.bot.send_message(chat_id, f'Provide a username of a home owner.')
+            username = cmd[1]
+            try:
+                secret = uuid.UUID(username)
+                home = self.get_home(auth, secret)
+            except ValueError:
+                users = self.users('name', username)
+                if users.error or users.data.__len__() == 0:
+                    return self.bot.send_message(chat_id, 'Did not find this user')
+                home = users.data.pop().secret
+                home = self.get_home(auth, home)
+
+        if home.error:
+            return self.bot.send_message(chat_id, f'Failed to get the home: {home.error_message}')
+
+        if isinstance(home.data, list):
+            try:
+                home.data = home.data[0]
+            except IndexError:
+                return self.bot.send_message(chat_id, 'Home not found?')
+        rooms = self.get_home_rooms(auth, home.data.key())
+        if rooms.error:
+            return self.bot.send_message(chat_id, f'Failed to get rooms: {rooms.error_message}')
+        if self.is_public(message):
+            return self.bot.send_message(chat_id,
+                                         "The rooms are:\n" +
+                                         "\n".join(f'<a href="{room.address}">{room.name}</a>' for room in rooms.data))
+        else:
+            markup = telebot.types.InlineKeyboardMarkup()
+            for room in rooms.data:
+                markup.add(telebot.types.InlineKeyboardButton(room.name, url=room.address))
+            markup.add(telebot.types.InlineKeyboardButton('Back to homes', callback_data='/homes'))
+            return self.inline_menu(chat_id, text='Here are the rooms', markup=markup,
+                                    original_message=original_message, callback_id=callback_id)
+
+    @with_auth
+    def show_homes(self, message):
+        if isinstance(message, telebot.types.Message):
+            text = message.text
+            chat_id = message.chat.id
+            original_message = None
+            callback_id = None
+        else:
+            text = message.data
+            chat_id = message.message.chat.id
+            original_message = message.message.id
+            callback_id = message.id
+        homes = self.get_visible_homes(self.userbase.get(message.from_user.id))
+        if homes.error:
+            return self.bot.send_message(chat_id, f'Failed to get homes: {homes.error_message}')
+        if homes.data.__len__() > 20:
+            homes = homes.data[:20]
+        else:
+            homes = homes.data
+        users = self.users('secret', [q.owner for q in homes])
+        if users.error:
+            return self.bot.send_message(chat_id, 'Failed to find usernames')
+        markup = telebot.types.InlineKeyboardMarkup()
+        for user in users.data:
+            markup.add(
+                telebot.types.InlineKeyboardButton(f'{user.name}\'s Home', callback_data=f'/rooms {user.secret}'))
+        return self.inline_menu(chat_id, text='Homes available:', markup=markup, original_message=original_message,
+                                callback_id=callback_id, callback_text='Fetched homes')
 
     @with_auth
     def chat_member_event(self, event: telebot.types.ChatMemberUpdated):
@@ -136,10 +231,6 @@ class Telegram(Interface):
         if event.old_chat_member.status != 'left' and event.new_chat_member.status == 'left':
             self._user_leaves(event.new_chat_member.user.id, event.chat.id)
         self.sync()
-
-    @with_auth
-    def roominfo(self, message):
-        return self.bot.send_message('Not implemented yet :(')
 
     def save_activity(self, message: telebot.types.Message):  # todo cache managed rooms
         self._save_activity(message.from_user.id, message.from_user.username, message.chat.id)
@@ -188,7 +279,7 @@ class Telegram(Interface):
         self.bot.reply_to(message, txt)
 
     @with_auth
-    def start_info_command(self, message):
+    def start_command(self, message):
         cmd = message.text.split()
         if cmd.__len__() > 1:
             resp = self.use_invite(self.userbase.get(message.from_user.id), cmd[1])
@@ -211,13 +302,14 @@ class Telegram(Interface):
         home = self.home(self.userbase.get(message.from_user.id))
         if home.error:
             return self.bot.send_message(message.chat.id, 'failed to fetch home')
-        self.bot.send_message(message.chat.id, f'Your home is set up. It is {"closed" if home.data.closed else "open"}\n'
-                                               f'It is also {"locked" if home.data.locked else "unlocked"}.\n'
-                                               f'Locking the home will require an invite within the bot.\n'
-                                               f'Closed home only allows roommates to be there.\n'
-                                               f'Timeout is {home.data.timeout}\n'
-                                               f'To see who you invited you can use /edit commands.\n'
-                                               f'Your rooms are: \n {rooms}')
+        self.bot.send_message(message.chat.id,
+                              f'Your home is set up. It is {"closed" if home.data.closed else "open"}\n'
+                              f'It is also {"locked" if home.data.locked else "unlocked"}.\n'
+                              f'Locking the home will require an invite within the bot.\n'
+                              f'Closed home only allows roommates to be there.\n'
+                              f'Timeout is {home.data.timeout}\n'
+                              f'To see who you invited you can use /edit commands.\n'
+                              f'Your rooms are: \n {rooms}')
 
     @with_auth
     def secret_command(self, message):
@@ -393,7 +485,8 @@ class Telegram(Interface):
                     return self.bot.send_message(chat_id, f'Failed: {invite.error_message}')
                 if isinstance(invite.data, Invite):
                     markup = telebot.types.InlineKeyboardMarkup()
-                    markup.add(telebot.types.InlineKeyboardButton('Send an invite', switch_inline_query=Invite.secret.__str__()))
+                    markup.add(telebot.types.InlineKeyboardButton('Send an invite',
+                                                                  switch_inline_query=Invite.secret.__str__()))
                     return self.bot.send_message(chat_id, f'Invite created which you can use', markup=markup)
                 else:
                     if original_message is not None:
@@ -406,11 +499,11 @@ class Telegram(Interface):
                                 {'original_message': original_message, 'callback_id': callback_id,
                                  'command': command}, 'value')
                 return self.bot.send_message(chat_id,
-                    f'Send me a username. {"Use private chat to get a sendable invite" if public else ""}')
+                                             f'Send me a username. {"Use private chat to get a sendable invite" if public else ""}')
 
         if command == 'evict':
             if value is None:  # todo: make evict from roommates or invited specifically possible
-                secrets = home.roommates+home.invited
+                secrets = home.roommates + home.invited
                 users = self.users('secret', secrets)
                 if users.error:
                     return self.bot.send_message(chat_id, f'Failed to fetch users: {users.error_message}')
@@ -424,7 +517,8 @@ class Telegram(Interface):
                 users = [d[k] for k in d]
                 markup = telebot.types.InlineKeyboardMarkup(row_width=2)
                 for user in users:
-                    markup.add(telebot.types.InlineKeyboardButton(user.name, callback_data=f'/edithome evict {user.name}'))
+                    markup.add(
+                        telebot.types.InlineKeyboardButton(user.name, callback_data=f'/edithome evict {user.name}'))
                 markup.add(telebot.types.InlineKeyboardButton('Back', callback_data=f'/edithome'))
                 return self.inline_menu(chat_id, text='Choose a user to evict', markup=markup,
                                         original_message=original_message,
@@ -435,7 +529,8 @@ class Telegram(Interface):
                     self.bot.send_message(chat_id, f'Failed to evict: {resp.error_message}')
                 home = self.home(auth)
                 if home.error:
-                    return self.bot.send_message(f'User was evicted but I failed to fetch your home: {home.error_message}')
+                    return self.bot.send_message(
+                        f'User was evicted but I failed to fetch your home: {home.error_message}')
                 else:
                     home = home.data
                 if original_message is not None:
@@ -663,8 +758,6 @@ class Telegram(Interface):
         return self.editroom_recursive(auth, message.chat.id, rooms, room=room,
                                        command=command, value=value, public=self.is_public(message))
 
-
-
     @with_auth
     @with_permission
     def destroy_command(self, message):
@@ -680,7 +773,8 @@ class Telegram(Interface):
             return self.editroom_recursive(auth, message.chat.id, rooms, room=room, command='destroy', public=True)
         cmd = message.text.split()
         if cmd.__len__() == 1:
-            self.bot.send_message(message.chat.id, 'Send DESTROY to confirm.\n<b>WARNING</b>: This will delete everything.')
+            self.bot.send_message(message.chat.id,
+                                  'Send DESTROY to confirm.\n<b>WARNING</b>: This will delete everything.')
             return self.add_prompt(message.chat.id, message.chat.id, self.destroy_confirm,
                                    (auth, message.chat.id), {}, 'confirm')
         elif cmd.__len__() == 2:

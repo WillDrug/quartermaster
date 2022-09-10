@@ -239,15 +239,44 @@ class QuarterMaster:
         return user
 
     async def rooms(self, command, interface):
-        rooms = self._rooms.search(command.key, command.value)
-        rooms = [q for q in rooms if
-                 q.owner == command.auth.secret or command.auth.secret in q.invited or command.auth.secret in q.roommates]
+        if command.key is None:  # value is homeowner
+            home = self._homes.get(command.value)
+            if home is None:
+                raise ArithmeticError(f'No home for the key provided')
+            if not ((home.locked and (command.auth.secret in home.roommates or command.auth.secret in home.invited))\
+                    or (home.closed and (command.auth.secret in home.roommates)) or \
+                    command.auth.secret == home.owner or (not home.closed and not home.locked)):
+                raise ArithmeticError(f'Not allowed to view.')
+            rooms = self._rooms.search('owner', command.value)
+        else:  # todo also auth?
+            rooms = self._rooms.search(command.key, command.value)
         return rooms
 
     async def users(self, command, interface):
         if isinstance(command.value, list):
             return list(chain(*[self._users.search(command.key, q) for q in command.value]))
         return self._users.search(command.key, command.value)
+
+    async def homes(self, command, interface):
+        filter_lambda = lambda home: (home.locked and
+                                      (command.auth.secret in home.roommates or command.auth.secret in home.invited))\
+                                     or (home.closed and (command.auth.secret in home.roommates)) or \
+                                     command.auth.secret == home.owner or (not home.closed and not home.locked)
+        if command.key is None and command.value is None:  # get available
+            return self._homes.search_func(filter_lambda)
+        elif command.key == 'owner':
+            homes = [self._homes.get(command.value)]
+        elif command.value is not None:  # interface id
+            room = self._rooms.get(Room.make_key(interface, command.value))
+            if room is None:
+                raise ArithmeticError(f'This room is not managed')
+            homes = self._homes.get(room.owner)
+        else:
+            homes = self._homes.search(command.key, command.value)
+        if not isinstance(homes, list):
+            homes = [homes]
+        homes = list(filter(filter_lambda, homes))
+        return homes
 
     async def merge(self, command, interface):
         # 1) get current user from auth
@@ -396,8 +425,7 @@ class QuarterMaster:
     async def save(self, command, interface):
         return True
 
-    async def home(self, command, interface):
-        return self._homes.get(command.auth.secret)
+
 
     """ GENERAL COMMANDS SECTION END """
 
