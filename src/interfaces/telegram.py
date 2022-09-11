@@ -118,10 +118,10 @@ class Telegram(Interface):
     def __init__(self, send_queue, receive_queue, config, *args, **kwargs):
         token = config.telegram_auth
         self.bot = telebot.TeleBot(token, parse_mode='HTML')
+        self.handle = ""
         self.prepare_bot()
         self.userbase = {}
         self.state = {}
-        self.handle = ""
         super().__init__(send_queue, receive_queue, config, *args, **kwargs)
 
     """ BOT SECTION """
@@ -312,11 +312,9 @@ class Telegram(Interface):
             if resp.error:
                 self.bot.send_message(message.chat.id, f'Failed to process your invite: {resp.error_message}')
             else:
-                txt = f'You have been invited by {resp.data["owner"]} to join '
-                txt += "their home" if resp.data["rooms"].__len__() == 0 else \
-                    ("the following rooms: " + ", ".join(resp.data["rooms"]))
-                txt += f' as a {resp.data["status"]}'
-                self.bot.send_message(message.chat.id, txt)
+                txt = f'You have been invited by {resp.data["owner"]} to join their home as a {resp.data["status"]}'
+                txt += f"You can get the rooms by using <pre>/rooms {resp.data['owner']}</pre>"
+                return self.bot.send_message(message.chat.id, txt)
         # todo: add deep linking secret creation
         rooms = self.get_own_rooms(self.userbase.get(message.from_user.id, None), None)
         if rooms.error:
@@ -516,8 +514,11 @@ class Telegram(Interface):
                 if isinstance(invite.data, Invite):
                     markup = telebot.types.InlineKeyboardMarkup()
                     markup.add(telebot.types.InlineKeyboardButton('Send an invite',
-                                                                  switch_inline_query=Invite.secret.__str__()))
-                    return self.bot.send_message(chat_id, f'Invite created which you can use', markup=markup)
+                                                                  switch_inline_query=invite.data.secret.__str__()))
+                    return self.bot.send_message(chat_id, f'Invite created which you can use. '
+                                                          f'Or give this link: https://t.me/'
+                                                          f'{self.handle}?start={invite.data.secret.__str__()}',
+                                                 reply_markup=markup)
                 else:
                     if original_message is not None:
                         return self.edithome_recursive(auth, chat_id, public, home, original_message=original_message,
