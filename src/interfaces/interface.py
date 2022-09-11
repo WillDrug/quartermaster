@@ -216,7 +216,7 @@ class Interface(metaclass=ABCMeta):
         home = self.get_own_home(auth)
         if home.error:
             return home
-        home = home.data
+        home = home.data.pop()
         users = self.dispatch_command(Command(command_type=CommandType.users, key='name', value=username))
         if users.error:  # error'd
             return users
@@ -230,7 +230,7 @@ class Interface(metaclass=ABCMeta):
             invite = self.dispatch_command(Command(
                                                 command_type=CommandType.roommate if roommate else CommandType.invite,
                                                 auth=auth,
-                                                key=home
+                                                key=home.key()
             ))
             return invite
         # got user, can add
