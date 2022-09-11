@@ -10,7 +10,7 @@ from model import Invite
 from functools import wraps
 from typing import Union
 import re
-
+# todo add discord
 """
 Private chat: 28 total
     * /secret * : set your secret to be an existing one or get your current one
@@ -83,7 +83,7 @@ def with_permission(func):
             else:
                 chat_id = message.message.chat.id
             member = get_member(self.bot, chat_id, message.from_user.id)
-            if chat_id != user or member.status not in ['administrator', 'creator']:  #
+            if chat_id != user and member.status not in ['administrator', 'creator']:  #
                 return
         return func(self, message)
 
