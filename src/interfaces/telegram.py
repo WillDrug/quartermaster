@@ -374,7 +374,7 @@ class Telegram(Interface):
         home = self.get_own_home(auth)
         if home.error:
             return self.bot.reply_to(message, f'Failed to get your home: {home.error_message}')
-        home = home.data
+        home = home.data.pop()
         return self.edithome_recursive(auth, chat_id, self.is_public(message), home, command=command, value=value,
                                        original_message=original_message, callback_id=callback_id)
 
@@ -568,8 +568,9 @@ class Telegram(Interface):
         rooms = self.get_own_rooms(self.userbase.get(message.from_user.id), None)  # fixme cache
         if rooms.error:
             return self.bot.send_message(message.chat.id, 'Failed to get rooms: ' + rooms.error_message)
+        rooms = rooms.data
         if not private:
-            room = [q for q in rooms.data if q.interface_id == chat_id]
+            room = [q for q in rooms if q.interface_id == chat_id]
             if room.__len__() == 0:
                 return self.bot.send_message(chat_id, 'This room is not managed')
             room = room.pop()
@@ -606,17 +607,18 @@ class Telegram(Interface):
                                     callback_id=callback_id)
         if room is None:
             markup = telebot.types.InlineKeyboardMarkup(row_width=4)  # fixme markup row()
-            for room in rooms.data:
+            for room in rooms:
                 markup.add(
                     telebot.types.InlineKeyboardButton(text=room.name, callback_data=f'/editroom {room.name}'))
-                markup.add(
-                    telebot.types.InlineKeyboardButton(text='Edit Home', callback_data=f'/edithome')
-                )
-            return self.inline_menu(chat_id, 'Choose a room to edit', original_message=original_message,
-                                    markup=markup, callback_id=callback_id)
+            markup.add(
+                telebot.types.InlineKeyboardButton(text='Edit Home', callback_data=f'/edithome')
+            )
+            return self.inline_menu(chat_id, 'Choose a room to edit\n To add new one, '
+                                             'add the bot to a channel as an admin and run /manage',
+                                    original_message=original_message, markup=markup, callback_id=callback_id)
 
         if isinstance(room, str):
-            room_f = [q for q in rooms.data if q.name == room]
+            room_f = [q for q in rooms if q.name == room]
             if room_f.__len__() == 0:
                 return self.bot.send_message(chat_id, f'{room} is not managed')
             room = room_f.pop()
