@@ -3,8 +3,8 @@ from abc import ABCMeta, abstractmethod
 from time import sleep, time
 import threading
 from multiprocessing import Queue
-from src.utility.command import CommandType, Command, Response
-from src.model import *
+from utility.command import CommandType, Command, Response
+from model import *
 
 
 class Interface(metaclass=ABCMeta):

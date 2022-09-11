@@ -2,11 +2,11 @@ import asyncio
 import time
 import uuid
 
-from src.interfaces.interface import Interface
+from interfaces.interface import Interface
 import telebot
 from time import sleep
-from src.utility.command import CommandType, Command, Response
-from src.model import Invite
+from utility.command import CommandType, Command, Response
+from model import Invite
 from functools import wraps
 from typing import Union
 import re

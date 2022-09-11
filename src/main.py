@@ -3,13 +3,13 @@ import uuid
 import random
 import pydantic
 from multiprocessing import Queue, Process
-from src.interfaces import Interface, run_interface
-from src.utility.command import Command, CommandType, Response
+from interfaces import Interface, run_interface
+from utility.command import Command, CommandType, Response
 from time import sleep, time
 from typing import Union
 from utility.storage import InMemory, ShelveStorage
 from itertools import chain
-from src.model import User, Room, Invite, Guest, Home
+from model import User, Room, Invite, Guest, Home
 from utility.config import Config
 import html
 
