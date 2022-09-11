@@ -51,7 +51,8 @@ Public chat:
 def get_member(bot, chat_id, user_id):
     chat = bot.get_chat(chat_id)
     member = bot.get_chat_member(chat_id, user_id)
-    if chat.type == 'supergroup' and member.user.id == 1087968824:  # AnonymousGroupBot
+    # AnonymousGroupBot or Telegram user for channel posts
+    if chat.type == 'supergroup' and member.user.id in [1087968824, 777000]:
         admins = bot.get_chat_administrators(chat.id)
         admins = [q for q in admins if q.status=='creator']
         if admins.__len__() == 0:
@@ -82,7 +83,6 @@ def with_permission(func):
             else:
                 chat_id = message.message.chat.id
             member = get_member(self.bot, chat_id, message.from_user.id)
-            print(f'Processing permission for {member} in {chat_id} with uesr {user}')
             if chat_id != user or member.status not in ['administrator', 'creator']:  #
                 return
         return func(self, message)
@@ -98,9 +98,11 @@ def with_auth(func):
         else:
             chat_id = message.chat.id
         member = get_member(self.bot, chat_id, message.from_user.id)
+        if member is None:
+            return
         if member.user != message.from_user:
             message.from_user = member.user
-        if member.user.id not in self.userbase and not member.user.is_bot:
+        if member.user.id not in self.userbase: # and not member.user.is_bot:
             resp = self.auth(message.from_user.id, message.from_user.username)
 
             if not resp.error:
@@ -255,6 +257,7 @@ class Telegram(Interface):
             self._user_leaves(event.new_chat_member.user.id, event.chat.id)
         self.sync()
 
+    @with_auth
     def save_activity(self, message: telebot.types.Message):  # todo cache managed rooms
         self._save_activity(message.from_user.id, message.from_user.username, message.chat.id)
 
@@ -749,7 +752,7 @@ class Telegram(Interface):
         if home.error:
             return self.bot.reply_to(message, f'Failed to find your home: {home.error_message}')
         else:
-            home = home.data
+            home = home.data.pop()
         cmd = message.text.split()
         if cmd.__len__() == 1:
             value = None
@@ -847,7 +850,8 @@ class Telegram(Interface):
         except telebot.apihelper.ApiTelegramException as e:
             return Response(command_id=command.command_id, error=True, error_message=e.__str__())
         for user in command.value:
-            self.bot.kick_chat_member(chat.id, user.interface_id)
+            self.bot.kick_chat_member(chat.id, user.interface_id, until_date=time.time()+5)
+            self.bot.unban_chat_member(chat.id, user.interface_id)
         return Response(command_id=command.command_id, data=True)
 
     """ EVENT SECTION END """
@@ -866,6 +870,5 @@ if __name__ == '__main__':
     from src.utility.config import Config
 
     t = Telegram(Queue(), Queue(), Config())
-    t.bot.get_chat_administrators(-1001645035440)
     print([(q.user.id, q.status) for q in t.bot.get_chat_administrators(-1001204546755)])
     # t.run()
