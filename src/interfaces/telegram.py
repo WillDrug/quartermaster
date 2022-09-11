@@ -103,7 +103,19 @@ def with_auth(func):
         if member.user != message.from_user:
             message.from_user = member.user
         if member.user.id not in self.userbase: # and not member.user.is_bot:
-            resp = self.auth(message.from_user.id, message.from_user.username)
+            if message.from_user.username is not None:
+                username = message.from_user.username
+            else:
+                first = message.from_user.first_name
+                last = message.from_user.last_name
+                if first is None:
+                    first = ""
+                if last is None:
+                    last = ""
+                first = re.sub(r'[^0-9a-zA-Zа-яА-Я]+', '', first)
+                last =  re.sub(r'[^0-9a-zA-Zа-яА-Я]+', '', last)
+                username = first+last+member.user.id.__str__()[-5:]
+            resp = self.auth(message.from_user.id, username)
 
             if not resp.error:
                 self.userbase[message.from_user.id] = resp.data
@@ -328,6 +340,7 @@ class Telegram(Interface):
             return self.bot.send_message(message.chat.id, f'failed to fetch home: {home.error_message}')
         home = home.data.pop()
         self.bot.send_message(message.chat.id,
+                              f'Your username in this bot is: {self.userbase.get(message.from_user.id).name}'
                               f'Your home is set up. It is {"closed" if home.closed else "open"}\n'
                               f'It is also {"locked" if home.locked else "unlocked"}.\n'
                               f'Locking the home will require an invite within the bot.\n'
