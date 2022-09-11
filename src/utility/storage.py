@@ -105,14 +105,3 @@ class ShelveStorage(InMemory):
     def __del__(self):
         self.data.close()
 
-if __name__ == '__main__':
-    class Mut(KeyStored):
-        def __init__(self, a, b):
-            self.a = a
-            self.b = b
-
-        def key(self):
-            return str(self.a)
-
-    m = ShelveStorage(Mut, path='')
-    print(m.get('1').b)
