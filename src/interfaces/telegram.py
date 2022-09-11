@@ -48,6 +48,16 @@ Public chat:
     
     
 """
+def get_member(bot, chat_id, user_id):
+    chat = bot.get_chat(chat_id)
+    member = bot.get_chat_member(chat_id, user_id)
+    if chat.type == 'supergroup' and member.user.id == 1087968824:  # AnonymousGroupBot
+        admins = bot.get_chat_administrators(chat.id)
+        admins = [q for q in admins if q.status=='creator']
+        if admins.__len__() == 0:
+            return None
+        member = admins.pop()
+    return member
 
 
 def master_only(func):
@@ -71,10 +81,8 @@ def with_permission(func):
                 chat_id = message.chat.id
             else:
                 chat_id = message.message.chat.id
-            member = self.bot.get_chat_member(chat_id, user)
-            chat = self.bot.get_chat(chat_id)
-            if chat_id == user or member.status in ['administrator', 'creator'] or \
-                    (chat.type == 'supergroup' and member.user.id == 1087968824):  #
+            member = get_member(self.bot, chat_id, message.from_user.id)
+            if chat_id == user or member.status in ['administrator', 'creator']:  #
                 return func(self, message)
         return
 
@@ -84,7 +92,14 @@ def with_permission(func):
 def with_auth(func):
     @wraps(func)
     def perform_auth(self, message):
-        if message.from_user.id not in self.userbase:
+        if isinstance(message, telebot.types.CallbackQuery):
+            chat_id = message.message.chat.id
+        else:
+            chat_id = message.chat.id
+        member = get_member(self.bot, chat_id, message.from_user.id)
+        if member.user != message.from_user:
+            message.from_user = member.user
+        if member.user.id not in self.userbase and not member.user.is_bot:
             resp = self.auth(message.from_user.id, message.from_user.username)
 
             if not resp.error:
@@ -156,6 +171,9 @@ class Telegram(Interface):
             callback_id = message.id
         user_id = message.from_user.id
         auth = self.userbase.get(user_id)
+        if text.split().__len__() > 1 and text.split()[1] == 'done':
+            return self.inline_menu(chat_id, original_message=original_message, text='Inline menu closed',
+                             callback_text='Done', callback_id=callback_id, command='/rooms')
         if self.is_public(message):
             home = self.get_current_home(auth, chat_id)
         else:
@@ -194,7 +212,7 @@ class Telegram(Interface):
                 markup.add(telebot.types.InlineKeyboardButton(room.name, url=room.address))
             markup.add(telebot.types.InlineKeyboardButton('Back to homes', callback_data='/homes'))
             return self.inline_menu(chat_id, text='Here are the rooms', markup=markup,
-                                    original_message=original_message, callback_id=callback_id)
+                                    original_message=original_message, callback_id=callback_id, command='/homes')
 
     @with_auth
     def show_homes(self, message):
@@ -208,6 +226,9 @@ class Telegram(Interface):
             chat_id = message.message.chat.id
             original_message = message.message.id
             callback_id = message.id
+        if text.split().__len__() > 1 and text.split()[1] == 'done':
+            return self.inline_menu(chat_id, original_message=original_message, text='Inline menu closed',
+                             callback_text='Done', callback_id=callback_id, command='/homes')
         homes = self.get_visible_homes(self.userbase.get(message.from_user.id))
         if homes.error:
             return self.bot.send_message(chat_id, f'Failed to get homes: {homes.error_message}')
@@ -223,7 +244,7 @@ class Telegram(Interface):
             markup.add(
                 telebot.types.InlineKeyboardButton(f'{user.name}\'s Home', callback_data=f'/rooms {user.secret}'))
         return self.inline_menu(chat_id, text='Homes available:', markup=markup, original_message=original_message,
-                                callback_id=callback_id, callback_text='Fetched homes')
+                                callback_id=callback_id, callback_text='Fetched homes', command='/homes')
 
     @with_auth
     def chat_member_event(self, event: telebot.types.ChatMemberUpdated):
@@ -382,6 +403,9 @@ class Telegram(Interface):
     def edithome_recursive(self, auth, chat_id, public, home, command=None, value=None, original_message=None,
                            callback_id=None, callback_text=None):
         # todo: add sync to /address
+        if command == 'done':
+            return self.inline_menu(chat_id, text='Inline menu closed.', original_message=original_message,
+                                    callback_id=callback_id, callback_text='Editing finished', command='/edithome')
         if command is None:
             markup = telebot.types.InlineKeyboardMarkup(row_width=4)
             if home.locked:
@@ -430,7 +454,7 @@ class Telegram(Interface):
             txt += f'\nInvited: {invited}'
             txt += f'\nRoommates: {roommates}'
             return self.inline_menu(chat_id, text=txt, markup=markup, original_message=original_message,
-                                    callback_id=callback_id, callback_text=callback_text)
+                                    callback_id=callback_id, callback_text=callback_text, command='/edithome')
         # command can be /lock /unlock /close /open /timeout /invite /roommate /evict -- done via /edithome or /single
         # for rooms leave /name /address /destroy and the same from /editroom (menu)
         if command in ['lock', 'unlock', 'open', 'close']:
@@ -524,7 +548,7 @@ class Telegram(Interface):
                 markup.add(telebot.types.InlineKeyboardButton('Back', callback_data=f'/edithome'))
                 return self.inline_menu(chat_id, text='Choose a user to evict', markup=markup,
                                         original_message=original_message,
-                                        callback_id=callback_id, callback_text=callback_text)
+                                        callback_id=callback_id, callback_text=callback_text, command='/edithome')
             else:
                 resp = self.evict(auth, value)
                 if resp.error:
@@ -841,5 +865,6 @@ if __name__ == '__main__':
     from src.utility.config import Config
 
     t = Telegram(Queue(), Queue(), Config())
-    t.bot.get_chat(391834833310)
+    t.bot.get_chat_administrators(-1001645035440)
+    print([(q.user.id, q.status) for q in t.bot.get_chat_administrators(-1001204546755)])
     # t.run()
