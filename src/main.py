@@ -233,7 +233,7 @@ class QuarterMaster:
             user = User(interface=interface, interface_id=command.key, name=command.value)
             home = self._homes.get(user.secret)
             if home is None:
-                self._homes.upsert(Home(owner=user.secret))
+                self._homes.upsert(Home(owner=user.secret, closed=True))
             self._users.upsert(user)
 
         return user
