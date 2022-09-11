@@ -299,16 +299,17 @@ class Telegram(Interface):
             rooms = ""
         else:
             rooms = '\n'.join(f"* {room.name} ({room.interface})" for room in rooms.data)
-        home = self.home(self.userbase.get(message.from_user.id))
+        home = self.get_own_home(self.userbase.get(message.from_user.id))
         if home.error:
-            return self.bot.send_message(message.chat.id, 'failed to fetch home')
+            return self.bot.send_message(message.chat.id, f'failed to fetch home: {home.error_message}')
+        home = home.data.pop()
         self.bot.send_message(message.chat.id,
-                              f'Your home is set up. It is {"closed" if home.data.closed else "open"}\n'
-                              f'It is also {"locked" if home.data.locked else "unlocked"}.\n'
+                              f'Your home is set up. It is {"closed" if home.closed else "open"}\n'
+                              f'It is also {"locked" if home.locked else "unlocked"}.\n'
                               f'Locking the home will require an invite within the bot.\n'
                               f'Closed home only allows roommates to be there.\n'
-                              f'Timeout is {home.data.timeout}\n'
-                              f'To see who you invited you can use /edit commands.\n'
+                              f'Timeout is {home.timeout}\n'
+                              f'To see who you invited you can use /edithome command.\n'
                               f'Your rooms are: \n {rooms}')
 
     @with_auth
@@ -370,7 +371,7 @@ class Telegram(Interface):
             command = cmd[1]
         if cmd.__len__() > 2:
             value = cmd[2]
-        home = self.home(auth)
+        home = self.get_own_home(auth)
         if home.error:
             return self.bot.reply_to(message, f'Failed to get your home: {home.error_message}')
         home = home.data
@@ -527,7 +528,7 @@ class Telegram(Interface):
                 resp = self.evict(auth, value)
                 if resp.error:
                     self.bot.send_message(chat_id, f'Failed to evict: {resp.error_message}')
-                home = self.home(auth)
+                home = self.get_own_home(auth)
                 if home.error:
                     return self.bot.send_message(
                         f'User was evicted but I failed to fetch your home: {home.error_message}')
@@ -716,7 +717,7 @@ class Telegram(Interface):
     @with_auth
     def edithome_single_command(self, message):
         auth = self.userbase.get(message.from_user.id)
-        home = self.home(auth)
+        home = self.get_own_home(auth)
         if home.error:
             return self.bot.reply_to(message, f'Failed to find your home: {home.error_message}')
         else:

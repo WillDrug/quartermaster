@@ -141,8 +141,8 @@ class Interface(metaclass=ABCMeta):
         self.activity = {}
         return self.dispatch_command(Command(command_type=CommandType.sync, value=active), awaiting=False)
 
-    def home(self, auth):
-        return self.dispatch_command(Command(command_type=CommandType.homes, auth=auth, value=True))
+    def get_own_home(self, auth):
+        return self.dispatch_command(Command(command_type=CommandType.homes, auth=auth))
 
     def _save_activity(self, user_id, username, room_id):
         if room_id not in self.activity:
@@ -213,7 +213,7 @@ class Interface(metaclass=ABCMeta):
         return self.dispatch_command(Command(command_type=CommandType.edit, auth=auth, key=key, value=changes))
 
     def invite(self, auth, username, can_use_invite=False, roommate=False):
-        home = self.home(auth)
+        home = self.get_own_home(auth)
         if home.error:
             return home
         home = home.data
