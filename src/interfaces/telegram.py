@@ -82,9 +82,10 @@ def with_permission(func):
             else:
                 chat_id = message.message.chat.id
             member = get_member(self.bot, chat_id, message.from_user.id)
-            if chat_id == user or member.status in ['administrator', 'creator']:  #
-                return func(self, message)
-        return
+            print(f'Processing permission for {member} in {chat_id} with uesr {user}')
+            if chat_id != user or member.status not in ['administrator', 'creator']:  #
+                return
+        return func(self, message)
 
     return check_permission
 
