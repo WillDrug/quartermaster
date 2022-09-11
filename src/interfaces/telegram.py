@@ -71,10 +71,12 @@ def with_permission(func):
                 chat_id = message.chat.id
             else:
                 chat_id = message.message.chat.id
-            if not chat_id == user and self.bot.get_chat_member(chat_id, user).status not in ['administrator',
-                                                                                              'creator']:
-                return
-        return func(self, message)
+            member = self.bot.get_chat_member(chat_id, user)
+            chat = self.bot.get_chat(chat_id)
+            if chat_id == user or member.status in ['administrator', 'creator'] or \
+                    (chat.type == 'supergroup' and member.user.id == 1087968824):  #
+                return func(self, message)
+        return
 
     return check_permission
 
@@ -101,10 +103,10 @@ class Telegram(Interface):
         self.prepare_bot()
         self.userbase = {}
         self.state = {}
+        self.handle = ""
         super().__init__(send_queue, receive_queue, config, *args, **kwargs)
 
     """ BOT SECTION """
-
     def prepare_bot(self):
         self.bot.message_handler(commands=['start'], func=self.is_private)(self.start_command)
         self.bot.message_handler(commands=['secret'], func=self.is_private)(self.secret_command)
@@ -133,7 +135,6 @@ class Telegram(Interface):
         self.bot.message_handler(commands=['rooms'])(self.show_home_rooms)
         self.bot.callback_query_handler(lambda call: call.data.startswith('/homes'))(self.show_homes)
         self.bot.message_handler(commands=['homes'], func=self.is_private)(self.show_homes)
-        self.bot.message_handler()
 
     def info(self, message):
         if self.is_public(message):
@@ -244,7 +245,7 @@ class Telegram(Interface):
         if not auth.error:
             rooms = self.get_own_rooms(auth.data, None)
             if not rooms.error:
-                rooms = [q for q in rooms.data if not q.closed]
+                rooms = rooms.data
                 for room in rooms:
                     res.append(telebot.types.InlineQueryResultArticle(room.name, f'Give {room.name} address',
                                                                       telebot.types.InputTextMessageContent(
