@@ -1,6 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from typing import Union, Any, Iterable, Callable
-from src.model import KeyStored
+from model import KeyStored
 import shelve
 
 class Storage(metaclass=ABCMeta):

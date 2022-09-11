@@ -2,7 +2,7 @@ from enum import Enum, IntEnum
 import pydantic
 from uuid import uuid4
 from typing import Union, Optional
-from src.model import User
+from model import User
 
 
 class CommandType(Enum):
