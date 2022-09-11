@@ -1,7 +1,7 @@
 from time import time
 from os import getenv
 
-class Config:
+class Config:  # todo add autodeploy, add tg auth to github secrets (may be pack into docker.io image)
     delay_times = [0, 0.1, 0.5, 1, 3, 5]
     delay_switch = [3, 10, 30, 60*2, 60*5, 60*10]
     shutdown_delay = 5
