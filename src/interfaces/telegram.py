@@ -517,6 +517,8 @@ class Telegram(Interface):
                 resp = self.edit(auth, "Home", {"key": home.key(), "timeout": value})
                 if resp.error:
                     return self.bot.send_message(chat_id, f'failed to set timeout: {resp.error_message}')
+                if original_message is None:
+                    return self.bot.send_message(chat_id, 'Timeout set.')
                 return self.edithome_recursive(auth, chat_id, public, resp.data, original_message=original_message,
                                                callback_id=callback_id, callback_text='Timeout is set')
         if command in ['invite', 'roommate']:
