@@ -377,6 +377,7 @@ class QuarterMaster:
                 if command.auth.secret not in home.invited:
                     home.invited.append(command.auth.secret)
             self._invites.delete_via_obj([invite])
+            self._homes.upsert(home)
             owners = self._users.search('secret', invite.creator)
             if owners.__len__() > 0:
                 test = [q for q in owners if q.interface == interface]
