@@ -950,7 +950,8 @@ class Telegram(Interface):
             return Response(command_id=command.command_id, error=True, error_message=e.__str__())
         for user in command.value:
             self.bot.kick_chat_member(chat.id, user.interface_id, until_date=time.time()+5)
-            self.bot.unban_chat_member(chat.id, user.interface_id)
+            if chat.type in ['supergroup', 'channel']:
+                self.bot.unban_chat_member(chat.id, user.interface_id)
 
         return Response(command_id=command.command_id, data=True)
 

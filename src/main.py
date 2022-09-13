@@ -179,15 +179,14 @@ class QuarterMaster:
             return await self.dispatch_command(Command(command_type=CommandType.evict, key=room.interface_id,
                                                        value=[user]), interface, awaiting=False)
         # get other interfaces if present
-        guests = self._guests.search('user', user.seret)
+        guests = self._guests.search('user', user.secret)
         additional_kick = {}
         for guest in guests:
             test_room = self._rooms.get(guest.room)
-            if test_room.interface != interface:
-                if test_room.interface_id != room.interface_id:
-                    if test_room.interface not in additional_kick:
-                        additional_kick[test_room.interface] = []
-                    additional_kick[test_room.interface].append(test_room.interface_id)
+            if test_room.interface_id != room.interface_id:
+                if test_room.interface not in additional_kick:
+                    additional_kick[test_room.interface] = []
+                additional_kick[test_room.interface].append(test_room.interface_id)
         for i in additional_kick:
             for iid in additional_kick[i]:
                 asyncio.create_task(self.dispatch_command(Command(command_type=CommandType.evict, key=iid,
