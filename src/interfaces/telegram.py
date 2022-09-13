@@ -960,6 +960,7 @@ class Telegram(Interface):
         while not self._shutdown:
             self.bot.polling(allowed_updates=telebot.util.update_types)  # fixme configurable delay
             sleep(self.config.polling_delay)
+        print(f'Telegram stopped polling')
 
     def local_shutdown(self):
         self.bot.stop_bot()

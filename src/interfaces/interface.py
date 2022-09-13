@@ -86,10 +86,12 @@ class Interface(metaclass=ABCMeta):
         return resp
 
     def shutdown(self):
+        print(f'Shutting down')
         self.local_shutdown()
         for t in self.threads:
             if t.is_alive():
                 t.join()
+        print(f'Interface {self.__class__} done full shutdown')
 
     @abstractmethod
     def local_shutdown(self):

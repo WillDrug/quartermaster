@@ -417,6 +417,7 @@ class QuarterMaster:
         return True
 
     async def shutdown(self, command, interface):
+        print(f'Quartermaster shutting down')
         await self.__dispatch_to_all(Command(command_type=CommandType.shutdown))
         for q in Interface.impl_list():
             i = self.interfaces.get(q)
@@ -424,6 +425,7 @@ class QuarterMaster:
                 raise RuntimeError(f'Process for interface {q} not found')
             i['process'].join()
             self.__shutdown = True
+        print('Quartermaster done full shutdown')
 
     async def save(self, command, interface):
         return True
