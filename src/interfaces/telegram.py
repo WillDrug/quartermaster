@@ -187,10 +187,12 @@ class Telegram(Interface):
 
     @with_auth
     def invite_callback(self, call):
+        self.bot.edit_message_text(inline_message_id=call.inline_message_id, text=f'Processing your invite')
         return self.inviteroommate_callback(call)
 
     @with_auth
     def roommate_callback(self, call):
+        self.bot.edit_message_text(inline_message_id=call.inline_message_id, text=f'Processing your invite')
         return self.inviteroommate_callback(call, roommate=True)
 
     def inviteroommate_callback(self, call, roommate=False):
@@ -655,7 +657,11 @@ class Telegram(Interface):
                     return self.bot.send_message(
                         f'User was evicted but I failed to fetch your home: {home.error_message}')
                 else:
-                    home = home.data
+                    try:
+                        home = home.data.pop()
+                    except IndexError:
+                        return self.bot.send_message(
+                            f'User was evicted but I failed to fetch your home: no home found?')
                 if original_message is not None:
                     return self.edithome_recursive(auth, chat_id, public, home, command=command,
                                                    original_message=original_message, callback_id=callback_id,
