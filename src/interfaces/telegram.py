@@ -182,8 +182,8 @@ class Telegram(Interface):
         self.bot.callback_query_handler(lambda call: call.data.startswith('/homes'))(self.show_homes)
         self.bot.message_handler(commands=['homes'], func=self.is_private)(self.show_homes)
 
-        self.bot.callback_query_handler(lambda call: call.data.startswith('/invited'))(self.invite_callback)
-        self.bot.callback_query_handler(lambda call: call.data.startswith('/roommate'))(self.roommate_callback)
+        self.bot.callback_query_handler(lambda call: call.data.startswith('/add_invited'))(self.invite_callback)
+        self.bot.callback_query_handler(lambda call: call.data.startswith('/add_roommate'))(self.roommate_callback)
 
     @with_auth
     def invite_callback(self, call):
@@ -196,15 +196,19 @@ class Telegram(Interface):
     def inviteroommate_callback(self, call, roommate=False):
         user = self.users('secret', call.data.split()[1])
         if user.error:
-            print(user.error_message)
+            self.bot.edit_message_text(inline_message_id=call.inline_message_id, text=f'Failed to do the invite:\n')
             return self.bot.answer_callback_query(call.id, f'Failed to find homeowner: {user.error_message}')
         try:
             user = user.data.pop()
         except IndexError:
+            self.bot.edit_message_text(inline_message_id=call.inline_message_id,
+                                       text=f'Failed to do the invite:\nHomeowner not found')
             return self.bot.answer_callback_query(call.id, f'Failed to find homeowner: no results')
         guest = self.users('secret', call.data.split()[1])
         if guest.error:
-            print(guest.error_message)
+            self.bot.edit_message_text(inline_message_id=call.inline_message_id, text=f'Failed to invite: can\'t '
+                                                                                      f'find you:\n'
+                                                                                      f'{guest.error_message}')
             return self.bot.answer_callback_query(call.id, f'Failed to find you: {guest.error_message}')
         try:
             guest = guest.data.pop()
@@ -212,8 +216,12 @@ class Telegram(Interface):
             return self.bot.answer_callback_query(call.id, f'Failed to find you: no results')
         resp = self.add_guest(user, guest, roommate=roommate)
         if resp.error:
-            print(resp.error_message)
+            self.bot.edit_message_text(inline_message_id=call.inline_message_id, text=f'Failed to add you:\n'
+                                                                                      f'{resp.error_message}')
             return self.bot.answer_callback_query(call.id, f'Failed to add you: {resp.error_message}')
+        self.bot.edit_message_text(inline_message_id=call.inline_message_id,
+                                   text=f'You have been added as a '
+                                        f'{"roommate" if roommate else "guest"}')
         return self.bot.answer_callback_query(call.id, f'You have been added as {"roommate" if roommate else "guest"}')
 
     def info(self, message):
@@ -330,14 +338,14 @@ class Telegram(Interface):
         if inline_query.chat_type == 'private':
             markup = telebot.types.InlineKeyboardMarkup()
             markup.add(
-                telebot.types.InlineKeyboardButton('Accept Invite', callback_data=f'/invited {auth.secret}'))
+                telebot.types.InlineKeyboardButton('Accept Invite', callback_data=f'/add_invited {auth.secret}'))
             res.append(telebot.types.InlineQueryResultArticle(f'{auth.secret}i', 'Invite as a guest',
                                                               telebot.types.InputTextMessageContent(
                                                                   'You have been invited to be a guest.'
                                                               ), reply_markup=markup))
             markup = telebot.types.InlineKeyboardMarkup()
             markup.add(
-                telebot.types.InlineKeyboardButton('Accept Invite', callback_data=f'/roommate {auth.secret}'))
+                telebot.types.InlineKeyboardButton('Accept Invite', callback_data=f'/add_roommate {auth.secret}'))
             res.append(telebot.types.InlineQueryResultArticle(f'{auth.secret}r', 'Invite as a roommate',
                                                               telebot.types.InputTextMessageContent(
                                                                   'You have been invited to be a roommate'
