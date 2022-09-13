@@ -89,38 +89,54 @@ def with_permission(func):
 
     return check_permission
 
+def get_username(from_user):
+    if from_user.username is not None:
+        username = from_user.username
+    else:
+        first = from_user.first_name
+        last = from_user.last_name
+        if first is None:
+            first = ""
+        if last is None:
+            last = ""
+        first = re.sub(r'[^0-9a-zA-Zа-яА-Я]+', '', first)
+        last = re.sub(r'[^0-9a-zA-Zа-яА-Я]+', '', last)
+        username = first + last + from_user.id.__str__()[-5:]
+    return username
+
 
 def with_auth(func):
     @wraps(func)
     def perform_auth(self, message):
         if isinstance(message, telebot.types.CallbackQuery):
-            chat_id = message.message.chat.id
+            if message.message is not None:
+                chat_id = message.message.chat.id
+            else:
+                chat_id = None
+        elif isinstance(message, telebot.types.InlineQuery):
+            chat_id = None
         else:
             chat_id = message.chat.id
-        member = get_member(self.bot, chat_id, message.from_user.id)
-        if member is None:
-            return
-        if member.user != message.from_user:
-            message.from_user = member.user
-        if member.user.id not in self.userbase: # and not member.user.is_bot:
-            if message.from_user.username is not None:
-                username = message.from_user.username
-            else:
-                first = message.from_user.first_name
-                last = message.from_user.last_name
-                if first is None:
-                    first = ""
-                if last is None:
-                    last = ""
-                first = re.sub(r'[^0-9a-zA-Zа-яА-Я]+', '', first)
-                last =  re.sub(r'[^0-9a-zA-Zа-яА-Я]+', '', last)
-                username = first+last+member.user.id.__str__()[-5:]
+        if chat_id is not None:
+            member = get_member(self.bot, chat_id, message.from_user.id)
+            if member is None:
+                return
+            if member.user != message.from_user:
+                message.from_user = member.user
+            user_id = member.user.id
+        else:
+            user_id = message.from_user.id
+        if user_id not in self.userbase:  # and not member.user.is_bot:
+            username = get_username(message.from_user)
             resp = self.auth(message.from_user.id, username)
 
             if not resp.error:
                 self.userbase[message.from_user.id] = resp.data
             else:
-                return self.bot.reply_to(message, f'There was an error while authenticating you: {resp.error_message}')
+                if chat_id is not None:
+                    return self.bot.send_message(chat_id, f'There was an error while authenticating you: {resp.error_message}')
+                else:
+                    print(f'Here a log should be done. Inline query auth failed.')
         return func(self, message)
 
     return perform_auth
@@ -165,6 +181,48 @@ class Telegram(Interface):
         self.bot.message_handler(commands=['rooms'])(self.show_home_rooms)
         self.bot.callback_query_handler(lambda call: call.data.startswith('/homes'))(self.show_homes)
         self.bot.message_handler(commands=['homes'], func=self.is_private)(self.show_homes)
+
+        self.bot.callback_query_handler(lambda call: call.data.startswith('/add_invited'))(self.invite_callback)
+        self.bot.callback_query_handler(lambda call: call.data.startswith('/add_roommate'))(self.roommate_callback)
+
+    @with_auth
+    def invite_callback(self, call):
+        return self.inviteroommate_callback(call)
+
+    @with_auth
+    def roommate_callback(self, call):
+        return self.inviteroommate_callback(call, roommate=True)
+
+    def inviteroommate_callback(self, call, roommate=False):
+        user = self.users('secret', call.data.split()[1])
+        if user.error:
+            self.bot.edit_message_text(inline_message_id=call.inline_message_id, text=f'Failed to do the invite:\n')
+            return self.bot.answer_callback_query(call.id, f'Failed to find homeowner: {user.error_message}')
+        try:
+            user = user.data.pop()
+        except IndexError:
+            self.bot.edit_message_text(inline_message_id=call.inline_message_id,
+                                       text=f'Failed to do the invite:\nHomeowner not found')
+            return self.bot.answer_callback_query(call.id, f'Failed to find homeowner: no results')
+        guest = self.users('secret', call.data.split()[1])
+        if guest.error:
+            self.bot.edit_message_text(inline_message_id=call.inline_message_id, text=f'Failed to invite: can\'t '
+                                                                                      f'find you:\n'
+                                                                                      f'{guest.error_message}')
+            return self.bot.answer_callback_query(call.id, f'Failed to find you: {guest.error_message}')
+        try:
+            guest = guest.data.pop()
+        except IndexError:
+            return self.bot.answer_callback_query(call.id, f'Failed to find you: no results')
+        resp = self.add_guest(user, guest, roommate=roommate)
+        if resp.error:
+            self.bot.edit_message_text(inline_message_id=call.inline_message_id, text=f'Failed to add you:\n'
+                                                                                      f'{resp.error_message}')
+            return self.bot.answer_callback_query(call.id, f'Failed to add you: {resp.error_message}')
+        self.bot.edit_message_text(inline_message_id=call.inline_message_id,
+                                   text=f'You have been added as a '
+                                        f'{"roommate" if roommate else "guest"}')
+        return self.bot.answer_callback_query(call.id, f'You have been added as {"roommate" if roommate else "guest"}')
 
     def info(self, message):
         if self.is_public(message):
@@ -273,23 +331,46 @@ class Telegram(Interface):
     def save_activity(self, message: telebot.types.Message):  # todo cache managed rooms
         self._save_activity(message.from_user.id, message.from_user.username, message.chat.id)
 
-    def inline(self, inline_query):
-        res = [telebot.types.InlineQueryResultArticle('1', 'Invite via code',
-                                                      telebot.types.InputTextMessageContent(
-                                                          f'https://t.me/{self.handle}?start={inline_query.query}'
-                                                      ))]
-        auth = self.auth(inline_query.from_user.id, inline_query.from_user.username)
-        if not auth.error:
-            rooms = self.get_own_rooms(auth.data, None)
-            if not rooms.error:
-                rooms = rooms.data
-                for room in rooms:
-                    res.append(telebot.types.InlineQueryResultArticle(room.name, f'Give {room.name} address',
-                                                                      telebot.types.InputTextMessageContent(
-                                                                          f'You can join {room.name} via {room.address}'
-                                                                      )))
+    @with_auth
+    def inline(self, inline_query: telebot.types.InlineQuery):
+        res = []
+        auth = self.userbase.get(inline_query.from_user.id)
+        if inline_query.chat_type == 'private':
+            markup = telebot.types.InlineKeyboardMarkup()
+            markup.add(
+                telebot.types.InlineKeyboardButton('Accept Invite', callback_data=f'/add_invited {auth.secret}'))
+            res.append(telebot.types.InlineQueryResultArticle(f'{auth.secret}i', 'Invite as a guest',
+                                                              telebot.types.InputTextMessageContent(
+                                                                  'You have been invited to be a guest.'
+                                                              ), reply_markup=markup))
+            markup = telebot.types.InlineKeyboardMarkup()
+            markup.add(
+                telebot.types.InlineKeyboardButton('Accept Invite', callback_data=f'/add_roommate {auth.secret}'))
+            res.append(telebot.types.InlineQueryResultArticle(f'{auth.secret}r', 'Invite as a roommate',
+                                                              telebot.types.InputTextMessageContent(
+                                                                  'You have been invited to be a roommate'
+                                                              ), reply_markup=markup))
+        rooms = self.get_own_rooms(auth, None)
+        if not rooms.error:
+            rooms = rooms.data
+            for room in rooms:
+                markup = telebot.types.InlineKeyboardMarkup(
+                    keyboard=[[telebot.types.InlineKeyboardButton(room.name, url=room.address)]]
+                )
+                res.append(telebot.types.InlineQueryResultArticle(room.name, f'Give {room.name} address',
+                                                                  telebot.types.InputTextMessageContent(
+                                                                      f'You can join "{room.name}" room via '
+                                                                      f'{room.address}'
+                                                                  ), reply_markup=markup))
+            markup = telebot.types.InlineKeyboardMarkup()
+            for room in rooms:
+                markup.add(telebot.types.InlineKeyboardButton(room.name, url=room.address))
+            txt = 'Here are the rooms of my home'
+            res.append(telebot.types.InlineQueryResultArticle('all', 'Send all rooms',
+                                                              telebot.types.InputTextMessageContent(txt),
+                                                              reply_markup=markup))
 
-        self.bot.answer_inline_query(inline_query.id, res, cache_time=1)
+        self.bot.answer_inline_query(inline_query.id, res, cache_time=5)
 
     def chat_type(self,
                   message: Union[telebot.types.Message, telebot.types.CallbackQuery, telebot.types.ChatJoinRequest]):
@@ -527,13 +608,9 @@ class Telegram(Interface):
                 if invite.error:
                     return self.bot.send_message(chat_id, f'Failed: {invite.error_message}')
                 if isinstance(invite.data, Invite):
-                    markup = telebot.types.InlineKeyboardMarkup()
-                    markup.add(telebot.types.InlineKeyboardButton('Send an invite',
-                                                                  switch_inline_query=invite.data.secret.__str__()))
-                    return self.bot.send_message(chat_id, f'Invite created which you can use. '
-                                                          f'Or give this link: https://t.me/'
-                                                          f'{self.handle}?start={invite.data.secret.__str__()}',
-                                                 reply_markup=markup)
+                    return self.bot.send_message(chat_id,
+                                                 f'Send this as an invite: '
+                                                 f'https://t.me/{self.handle}?start={invite.data.secret.__str__()}')
                 else:
                     if original_message is not None:
                         return self.edithome_recursive(auth, chat_id, public, home, original_message=original_message,
