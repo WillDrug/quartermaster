@@ -950,7 +950,8 @@ class Telegram(Interface):
             return Response(command_id=command.command_id, error=True, error_message=e.__str__())
         for user in command.value:
             self.bot.kick_chat_member(chat.id, user.interface_id, until_date=time.time()+5)
-            self.bot.unban_chat_member(chat.id, user.interface_id)
+            if chat.type in ['supergroup', 'channel']:
+                self.bot.unban_chat_member(chat.id, user.interface_id)
 
         return Response(command_id=command.command_id, data=True)
 
@@ -960,6 +961,7 @@ class Telegram(Interface):
         while not self._shutdown:
             self.bot.polling(allowed_updates=telebot.util.update_types)  # fixme configurable delay
             sleep(self.config.polling_delay)
+        print(f'Telegram stopped polling')
 
     def local_shutdown(self):
         self.bot.stop_bot()
