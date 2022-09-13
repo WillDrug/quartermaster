@@ -212,6 +212,31 @@ class Interface(metaclass=ABCMeta):
             raise KeyError(f'Edit command must contain key')
         return self.dispatch_command(Command(command_type=CommandType.edit, auth=auth, key=key, value=changes))
 
+    def add_guest(self, owner: Union[Home, User], guest: User, roommate=False):  # when two user objects exist
+        if isinstance(owner, Home):
+            if roommate:
+                res = owner.roommates
+            else:
+                res = owner.invited
+            if guest.secret not in res:
+                res.append(guest.secret)
+            resp = self.dispatch_command(Command(command_type=CommandType.edit, key='Home',
+                                                 value={'key': owner.key(),
+                                                        'roommates' if roommate else 'invited': res}))
+            return resp
+        else:
+            invite = self.dispatch_command(Command(
+                        command_type=CommandType.roommate if roommate else CommandType.invite,
+                        auth=owner,
+                        key=owner.secret.__str__()
+                    ))
+            if invite.error:
+                return invite
+            invite = invite.data
+            return self.dispatch_command(Command(command_type=CommandType.invite, key=None, value=invite.secret,
+                                                 auth=guest))
+
+
     def invite(self, auth, username, can_use_invite=False, roommate=False):
         home = self.get_own_home(auth)
         if home.error:
@@ -235,16 +260,7 @@ class Interface(metaclass=ABCMeta):
             return invite
         # got user, can add
         user = users.pop()
-        if roommate:
-            res = home.roommates
-        else:
-            res = home.invited
-        if user.secret not in res:
-            res.append(user.secret)
-        resp = self.dispatch_command(Command(command_type=CommandType.edit, key='Home',
-                                             value={'key': home.key(),
-                                                    'roommates' if roommate else 'invited': res}))
-        return resp
+        return self.add_guest(home, user, roommate=roommate)
 
 
     def use_invite(self, auth, secret):
