@@ -657,7 +657,11 @@ class Telegram(Interface):
                     return self.bot.send_message(
                         f'User was evicted but I failed to fetch your home: {home.error_message}')
                 else:
-                    home = home.data
+                    try:
+                        home = home.data.pop()
+                    except IndexError:
+                        return self.bot.send_message(
+                            f'User was evicted but I failed to fetch your home: no home found?')
                 if original_message is not None:
                     return self.edithome_recursive(auth, chat_id, public, home, command=command,
                                                    original_message=original_message, callback_id=callback_id,
