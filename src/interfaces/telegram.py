@@ -187,10 +187,12 @@ class Telegram(Interface):
 
     @with_auth
     def invite_callback(self, call):
+        self.bot.edit_message_text(inline_message_id=call.inline_message_id, text=f'Processing your invite')
         return self.inviteroommate_callback(call)
 
     @with_auth
     def roommate_callback(self, call):
+        self.bot.edit_message_text(inline_message_id=call.inline_message_id, text=f'Processing your invite')
         return self.inviteroommate_callback(call, roommate=True)
 
     def inviteroommate_callback(self, call, roommate=False):
