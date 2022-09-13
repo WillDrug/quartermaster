@@ -866,12 +866,9 @@ class Telegram(Interface):
         except telebot.apihelper.ApiTelegramException as e:
             return Response(command_id=command.command_id, error=True, error_message=e.__str__())
         for user in command.value:
-            member = self.bot.get_chat_member(chat.id, user.interface_id)
-            if member is not None:
-                if member.status in ['creator', 'adminsitrator']:
-                    continue
-                self.bot.kick_chat_member(chat.id, user.interface_id, until_date=time.time()+5)
-                self.bot.unban_chat_member(chat.id, user.interface_id)
+            self.bot.kick_chat_member(chat.id, user.interface_id, until_date=time.time()+5)
+            self.bot.unban_chat_member(chat.id, user.interface_id)
+
         return Response(command_id=command.command_id, data=True)
 
     """ EVENT SECTION END """

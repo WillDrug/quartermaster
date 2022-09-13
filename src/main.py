@@ -313,6 +313,8 @@ class QuarterMaster:
     async def create(self, command, interface):
         if command.key == 'Room':
             o = Room(**command.value)
+            if self._rooms.get(o.key()) is not None:
+                raise ArithmeticError(f'This room is already managed (!)')
             self._rooms.upsert(o)
         elif command.key == 'User':
             o = User(**command.value)
