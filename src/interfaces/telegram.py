@@ -124,8 +124,12 @@ def with_auth(func):
             if member.user != message.from_user:
                 message.from_user = member.user
             user_id = member.user.id
+            if member.user.is_bot:
+                return
         else:
             user_id = message.from_user.id
+            if message.from_user.is_bot:
+                return
         if user_id not in self.userbase:  # and not member.user.is_bot:
             username = get_username(message.from_user)
             resp = self.auth(message.from_user.id, username)
@@ -323,11 +327,11 @@ class Telegram(Interface):
 
     @with_auth
     def chat_member_event(self, event: telebot.types.ChatMemberUpdated):
-        if event.old_chat_member.status == 'left' and event.new_chat_member.status != 'left':
+        if event.new_chat_member.status == 'member':
             self._user_joins(event.new_chat_member.user.id, event.new_chat_member.user.username, event.chat.id)
-        if event.old_chat_member.status != 'left' and event.new_chat_member.status == 'left':
+        if event.new_chat_member.status == 'left':
             self._user_leaves(event.new_chat_member.user.id, event.chat.id)
-        self.sync()
+        #self.sync()
 
     @with_auth
     def save_activity(self, message: telebot.types.Message):  # todo cache managed rooms
@@ -949,7 +953,7 @@ class Telegram(Interface):
         except telebot.apihelper.ApiTelegramException as e:
             return Response(command_id=command.command_id, error=True, error_message=e.__str__())
         for user in command.value:
-            self.bot.kick_chat_member(chat.id, user.interface_id, until_date=time.time()+5)
+            self.bot.kick_chat_member(chat.id, user.interface_id, until_date=time.time())
             if chat.type in ['supergroup', 'channel']:
                 self.bot.unban_chat_member(chat.id, user.interface_id)
 

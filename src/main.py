@@ -82,6 +82,7 @@ class QuarterMaster:
         try:
             data = await self.command_processors[command.command_type](command, interface)
         except Exception as e:
+            print(f'on {command}: {e.__class__}: {e.__str__()}')  # todo logs
             message = f"{e.__class__.__name__}: {e.__str__()}"
             message = html.escape(message)
             resp = Response(command_id=command.command_id, data=None, error=True,
@@ -144,7 +145,7 @@ class QuarterMaster:
         users = self._users.search_func(lambda o: o.secret in guests_secrets)
         if users.__len__() == 0:
             return True
-        self._guests.delete_via_obj(guests)  # todo first get OK from the kicker then delete
+        # self._guests.delete_via_obj(guests)  # this is done by the LEAVE command
         c = Command(command_type=CommandType.evict, key=room.interface_id, value=users)  # dispatch kick command
         resp = await self.dispatch_command(c, room.interface, awaiting=True)
         if resp.error:
