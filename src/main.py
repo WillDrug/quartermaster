@@ -145,7 +145,7 @@ class QuarterMaster:
         users = self._users.search_func(lambda o: o.secret in guests_secrets)
         if users.__len__() == 0:
             return True
-        # self._guests.delete_via_obj(guests)  # this is done by the LEAVE command
+        self._guests.delete_via_obj(guests)
         c = Command(command_type=CommandType.evict, key=room.interface_id, value=users)  # dispatch kick command
         resp = await self.dispatch_command(c, room.interface, awaiting=True)
         if resp.error:
