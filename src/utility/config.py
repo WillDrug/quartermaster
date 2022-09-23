@@ -8,8 +8,9 @@ class Config:  # todo add autodeploy, add tg auth to github secrets (may be pack
     response_delay = 0.1
     polling_delay = 0.1
     sync_delay = 30
-    master_ids = ['Telegram391834810']
+    master_ids = ['Telegram391834810', 'Discord179309484320096256']
     telegram_auth = ''
+    discord_auth = ''
 
     def delay_counter(self):
         idx = 0

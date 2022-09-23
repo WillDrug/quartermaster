@@ -1,12 +1,14 @@
 import math
 import time
-import typing
 import re
 from interfaces.interface import Interface
 import discord
 import asyncio
+from model import User
 from functools import wraps
 from typing import Union
+import uuid
+from utility.command import Command, CommandType, Response
 
 
 class Prompt(discord.ui.Modal, title='Enter text'):
@@ -64,15 +66,14 @@ def master_only(func):
         if auth.key() not in self.config.master_ids:
             return
         return func(self, message)
+    return check_master
 
 class QuartermasterDiscordClient(discord.Client):
 
     class Handler:
-        def __init__(self, func, commands=(), chat_type=0, use_master_only=False,
-                     with_permission=False):
+        def __init__(self, func, commands=(), chat_type=0, use_master_only=False, with_permission=False):
             self.func = func.__func__
             self.instance = func.__self__
-            self.func = with_auth(self.func)
             self.commands = commands
             self.chat_type = chat_type
             self.master_only = use_master_only
@@ -97,6 +98,7 @@ class QuartermasterDiscordClient(discord.Client):
             if self.commands.__len__() > 0 and \
                     not any(text.startswith(f'/{command}') for command in self.commands):
                 return
+            self.func = with_auth(self.func)
             return await self.func(self.instance, message)
 
     handlers = []
@@ -116,11 +118,11 @@ class QuartermasterDiscordClient(discord.Client):
             await handler(message)
 
     @with_auth
-    async def on_member_join(self, member):
-        pass  # todo implement
+    async def on_member_join(self, member: discord.Member):
+        return self._user_joins(member.id, member.name, member.guild.id)
 
     async def on_raw_member_remove(self, member):
-        pass  # todo implement
+        return self._user_leaves(member.id, member.guild.id)
 
 
 class Discord(Interface):
@@ -139,8 +141,18 @@ class Discord(Interface):
         self.bot.register_handler(self.manage_command, ('manage',), only_public=True, with_permission=True)
         self.bot.register_handler(self.edithome_command, ('edithome',), with_permission=True)
         self.bot.register_handler(self.editroom_command, ('editroom',), with_permission=True)
+        self.bot.register_handler(self.clearinvites_command, ('clearinvites',))
+        self.bot.register_handler(self.edithome_single_command, ('invite', 'roommate', 'evict', 'lock', 'unlock', 'close', 'open', 'timeout'), with_permission=True)
+        self.bot.register_handler(self.editroom_single_command, ('destroy', 'name', 'address'), with_permission=True, only_public=True)
+        # todo: save, shutdown
+        self.bot.register_handler(self.info_command, ('info',))
+        self.bot.register_handler(self.show_homes, ('homes',), only_private=True)
+        self.bot.register_handler(self.show_rooms, ('rooms',))
+        self.bot.register_handler(self.shutdown_command, ('shutdown',), use_master_only=True)
 
     """ COMMANDS SECTION """
+    async def shutdown_command(self, message: discord.Message):
+        return self.dispatch_command(Command(command_type=CommandType.shutdown), awaiting=False)
 
     async def secret_command(self, message: discord.Message):
         cmd = message.content.split()
@@ -191,7 +203,9 @@ class Discord(Interface):
             return self.process_response(target, reply_text=f'Failed to get your home: {home.error_message}')
         home = home.data.pop()
 
-        return self._edithome_recursive(auth, target, message.guild.id, home, command=command, value=value)
+
+
+        return self._edithome_recursive(auth, target, None if message.guild is None else message.guild.id, home, command=command, value=value)
 
     async def editroom_command(self, message: Union[discord.Message, discord.Interaction]):
         if isinstance(message, discord.Message):
@@ -206,16 +220,17 @@ class Discord(Interface):
         value = None
         cmd = text.split()
 
-        if message.guild.id not in self.invites or time.time()-self.invites.get(message.guild.id, {}).get('synced', 0) > 180:
-            invites = await message.guild.invites()
+        if message.guild is not None:
+            if message.guild.id not in self.invites or time.time()-self.invites.get(message.guild.id, {}).get('synced', 0) > 180:
+                invites = await message.guild.invites()
 
-            if message.guild.vanity_url is not None:
-                invite = message.guild.vanity_url
-            elif invites.__len__() > 0:
-                invite = sorted(invites, key=lambda inv: inv.expires_at or math.inf)[-1].url
-            else:
-                invite = ''  # todo generate invite
-            self.invites[message.guild.id] = {'synced': 0, 'link': invite}
+                if message.guild.vanity_url is not None:
+                    invite = message.guild.vanity_url
+                elif invites.__len__() > 0:
+                    invite = sorted(invites, key=lambda inv: inv.expires_at or math.inf)[-1].url
+                else:
+                    invite = ''  # todo generate invite
+                self.invites[message.guild.id] = {'synced': 0, 'link': invite}
 
 
         private = message.guild is None
@@ -243,9 +258,114 @@ class Discord(Interface):
                 value = re.sub(r'[^0-9a-zA-Z]+', '', ''.join(cmd[3:]))
             else:
                 value = re.sub(r'[^0-9a-zA-Z]+', '', ''.join(cmd[2:]))
-
+        if room is not None and isinstance(room, str):
+            room = [q for q in rooms if q.name == room]
+            if room.__len__() > 0:
+                room = room.pop()
+            else:
+                return self.process_response(message, reply_text='Room failed?')
         return self._editroom_recursive(auth, message, rooms, not private, room=room, command=command, value=value)
 
+    async def clearinvites_command(self, message: discord.Message):
+        resp = self.clearinvites(self.userbase.get(message.from_user.id))
+        if resp.error:
+            txt = f'Failed to clear: {resp.error_message}'
+        else:
+            txt = 'Ok'
+        return await message.reply(content=txt)
+
+    async def edithome_single_command(self, message: discord.Message):
+        message.content = '/edithome ' + message.content[1:]
+        return await self.edithome_command(message)
+
+    async def editroom_single_command(self, message: discord.Message):
+        message.content = '/editroom ' + message.content[1:]
+        return await self.editroom_command(message)
+
+    async def info_command(self, message: discord.Message):
+        if message.guild is None:
+            return self.show_homes(message)
+        else:
+            return self.show_home_rooms(message)
+
+    async def show_homes(self, message: Union[discord.Message, discord.Interaction]):
+        if isinstance(message, discord.Interaction):
+            user = message.user
+            text = message.data['custom_id']
+        else:
+            user = message.author
+            text = message.content
+        if text.split().__len__() > 1 and text.split()[1] == 'done':
+            return self.process_response(message, text='Ok')
+        homes = self.get_visible_homes(self.userbase.get(user.id))
+        if homes.error:
+            return self.process_response(message, reply_text=f'Failed to fetch home: {homes.error_message}')
+        if homes.data.__len__() > 20:
+            homes = homes.data[:20]
+        else:
+            homes = homes.data
+        users = self.users('secret', [q.owner for q in homes])
+        if users.error:
+            return self.process_response(message, reply_text=f'Failed to get users: {users.error_message}')
+        user_data = []
+        for secret in [q.owner for q in homes]:
+            appropriate = [q for q in users.data if q.secret == secret and q.interface == self.__class__.__name__] or \
+                          [q for q in users.data if q.secret == secret]
+            user_data.append(appropriate.pop())
+        markup = []
+        for user in user_data:
+            markup.append((f'{user.name}\'s Home', f'/rooms {user.secret}'))
+        markup.append(('Done', '/rooms done'))
+        return self.process_response(message, text='Here are the homes', markup=markup)
+
+    async def show_rooms(self, message: discord.Message):
+        if isinstance(message, discord.Interaction):
+            user = message.user
+            text = message.data['custom_id']
+        else:
+            user = message.author
+            text = message.content
+        auth = self.userbase.get(user.id)
+        if text.split().__len__() > 1 and text.split()[1] == 'done':
+            return self.process_response(message, text='Done')
+        if message.guild is not None:
+            home = self.get_current_home(auth, message.guild.id)
+        else:
+            cmd = text.split()
+            if cmd.__len__() == 1:
+                return self.process_response(message, reply_text='Provide a username of a home owner')
+            username = cmd[1]
+            try:
+                secret = uuid.UUID(username)
+                home = self.get_home(auth, secret)
+            except ValueError:
+                users = self.users('name', username)
+                if users.error or users.data.__len__() == 0:
+                    return self.process_response(message, reply_text='Did not find this user')
+                home = users.data.pop().secret
+                home = self.get_home(auth, home)
+        if home.error:
+            return self.process_response(message, reply_text=f'Failed to get home: {home.error_message}')
+
+        if isinstance(home.data, list):
+            try:
+                home.data = home.data[0]
+            except IndexError:
+                return self.process_response(message, reply_text='No home found')
+        rooms = self.get_home_rooms(auth, home.data.key())
+        if rooms.error:
+            return self.process_response(message, reply_text=f'Failed to get rooms: {rooms.error_message}')
+        if message.guild is not None:
+            txt = 'The rooms are:'
+            for room in rooms.data:
+                txt += f'\n {room.name}: {room.address}'
+            return self.process_response(message, text=txt)
+        else:
+            markup = []
+            for room in rooms.data:
+                markup.append((room.name, room.address))
+            markup.append(('Done', '/rooms done'))
+            return self.process_response(message, text='Here are the rooms', markup=markup)
     def _get_deep_link(self, extra):
         return f'Hey! Send the bot `/start {extra}` to be invited :)'
 
@@ -264,8 +384,11 @@ class Discord(Interface):
             view = discord.ui.View(timeout=180)
 
             for label, callback in markup:
-                b = discord.ui.Button(label=label, custom_id=callback)
-                b.callback = self.bot.on_message
+                if callback.startswith('http'):
+                    b = discord.ui.Button(label=label, url=callback)
+                else:
+                    b = discord.ui.Button(label=label, custom_id=callback)
+                    b.callback = self.bot.on_message
                 view.add_item(b)
         if isinstance(target, discord.Message):
             self.bot.loop.create_task(target.channel.send(text or reply_text or 'Ok', view=view))
@@ -299,14 +422,27 @@ class Discord(Interface):
     """ COMMANDS SECTION END """
 
     def initialize(self):
-        self.bot.run('NzEyNjAzNjgwNzM3ODUzNTIx.GQuvjp.6CBkXZBviefi9Qm0lfW1YFYLNBUfBPa53X3W0Y')
+        self.bot.run(self.config.discord_auth)
 
     def local_shutdown(self):
         # fixme: this is not very elegant
         self.bot.loop.create_task(self.bot.close())
 
     async def kick(self, command):
-        print('no kick')
+        try:
+            guild = self.bot.get_guild(command.key)
+        except Exception as e:
+            return Response(command_id=command.command_id, error=True, error_message=e.__str__())
+        for user in command.value:
+            await guild.kick(user.interface_id, reason='Graciously left the host\'s home')
+
+        return Response(command_id=command.command_id, data=True)
 
     async def local_users(self, command):
-        print('locality!!!')
+        try:
+            guild = self.bot.get_guild(command.key.interface_id)
+            info = [q.id for q in guild.members]
+            resp = Response(command_id=command.command_id, data=info, error=False)
+        except Exception as e:
+            return Response(command_id=command.command_id, error=True, error_message=e.__str__())
+        return resp

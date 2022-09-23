@@ -482,7 +482,7 @@ class Interface(metaclass=ABCMeta):
                 markup.append(('Choose Room', '/editroom'))
             else:
                 markup.append(('Edit Home', '/edithome'))
-            markup.append(('Done', '/editroom done'))
+            markup.append(('Done', self.get_editroom_command(public, room=room, command='done')))
             room_info = f"Name: {room.name}\nAddress: {room.address}\nChoose an edit:"
             return self.process_response(target, text=room_info, markup=markup)
         if command == 'destroy':
@@ -505,6 +505,8 @@ class Interface(metaclass=ABCMeta):
                              {'command': command, 'room': room}, 'value')
         else:
             if value == '*':
+                if room.interface != self.__class__.__name__ or not public:
+                    return self.process_response(target, reply_text='Sync must only be called from the room itself.')
                 if command == 'address':  # todo different interface room edit ?
                     value = self._get_address(target)
                 if command == 'name':

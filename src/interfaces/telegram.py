@@ -295,7 +295,7 @@ class Telegram(Interface):
                                     original_message=original_message, callback_id=callback_id, command='/homes')
 
     @with_auth
-    def show_homes(self, message):
+    def show_homes(self, message):  # todo refactor into process_response func.
         if isinstance(message, telebot.types.Message):
             text = message.text
             chat_id = message.chat.id
@@ -699,7 +699,7 @@ class Telegram(Interface):
         except telebot.apihelper.ApiTelegramException as e:
             return Response(command_id=command.command_id, error=True, error_message=e.__str__())
         count = self.bot.get_chat_member_count(chat.id)
-        localinfo = [user for user in self.activity if self.activity[user]['room'] == command.key]
+        localinfo = [user.interface_id for user in self.activity if self.activity[user]['room'] == command.key]
         resp = Response(command_id=command.command_id, data=localinfo, error=count != localinfo.__len__())
         return resp
 
