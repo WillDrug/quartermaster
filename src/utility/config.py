@@ -2,14 +2,15 @@ from time import time
 from os import getenv
 
 class Config:  # todo add autodeploy, add tg auth to github secrets (may be pack into docker.io image)
-    delay_times = [0, 0.1, 0.5, 1, 3, 5]
-    delay_switch = [3, 10, 30, 60*2, 60*5, 60*10]
+    delay_times = [0, 0.01, 0.05, 0.5, 1, 3, 5, 10]
+    delay_switch = [3, 10, 30, 60*2, 60*5, 60*10, 60*24, 60*60]
     shutdown_delay = 5
-    response_delay = 1
-    polling_delay = 1
+    response_delay = 0.1
+    polling_delay = 0.1
     sync_delay = 30
-    master_ids = ['Telegram391834810']
+    master_ids = ['Telegram391834810', 'Discord179309484320096256']
     telegram_auth = ''
+    discord_auth = ''
 
     def delay_counter(self):
         idx = 0

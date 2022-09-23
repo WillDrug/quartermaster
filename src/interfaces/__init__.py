@@ -1,5 +1,6 @@
 from .interface import Interface
 from .telegram import Telegram
+from .qdiscord import Discord
 
 def run_interface(cls, send, receive, config):
     interfaces = Interface.impl_list()

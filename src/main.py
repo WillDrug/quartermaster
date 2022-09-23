@@ -290,12 +290,28 @@ class QuarterMaster:
         if user_bundle.__len__() == 0:
             raise ArithmeticError(f'The updated secret should match a secret of another interface!')
         user_bundle.append(command.auth)
+        # everything's fine, time to kill interfaces
+        for user in user_bundle:
+            await self.dispatch_command(Command(command_type=CommandType.merge, key=user.interface_id, value='*'), user.interface)
         # 3) generate new secret
         shared_secret = uuid.uuid5(uuid.NAMESPACE_OID, ''.join(q.interface_id for q in user_bundle))
         # 4) for each user, update secret reference in rooms, save if updated, then update secret to the new one
+        own_homes = self._homes.search_func(lambda o: o.owner in [q.secret for q in user_bundle])
+        new_home = Home(owner=shared_secret,
+             timeout=max([q.timeout for q in own_homes]),
+             locked=any([q.locked for q in own_homes]),
+             closed=any([q.closed for q in own_homes]),
+             invited=list(set(chain(*[q.invited for q in own_homes]))),
+             roommates=list(set(chain(*[q.roommates for q in own_homes])))
+        )
+        self._homes.upsert(new_home)
+        self._homes.delete_via_obj(own_homes)
+
         for user in user_bundle:
             self.update_secrets(user.secret, shared_secret)
             user.secret = shared_secret
+            self._users.upsert(user)
+            await self.dispatch_command(Command(command_type=CommandType.merge, key=user.interface_id, value=user), user.interface)
         return shared_secret
 
     async def destroy(self, command, interface):  # todo: implement the call to this or delete
@@ -405,7 +421,7 @@ class QuarterMaster:
 
         user = self._users.search('name', command.value)
         if user.__len__() > 1:
-            user = [q for q in user if user.interface == interface]  # try finding the correct one
+            user = [q for q in user if q.interface == interface]  # try finding the correct one
         if user.__len__() != 1:
             raise ArithmeticError(f'User {user} not found.')
         user = user[0]
@@ -435,22 +451,21 @@ class QuarterMaster:
     """ GENERAL COMMANDS SECTION END """
 
     def update_secrets(self, old_secret: pydantic.UUID5, new_secret: pydantic.UUID5):
-        rooms = self._rooms.search_func(
-            lambda o: o.owner == old_secret or old_secret in o.invited or old_secret in o.roommates
+        homes = self._homes.search_func(
+            lambda o: old_secret in o.invited or old_secret in o.roommates
         )
-        home = self._homes.get(old_secret)
-        if home is not None:
-            home.owner = new_secret
+        for home in homes:
+            if old_secret in home.invited:
+                home.invited.pop(home.invited.index(old_secret))
+                home.invited.append(new_secret)
+            if old_secret in home.roommates:
+                home.roommates.pop(home.roommates.index(old_secret))
+                home.roommates.append(new_secret)
             self._homes.upsert(home)
+        rooms = self._rooms.search('owner', old_secret)
         for room in rooms:
-            if room.owner == old_secret:
-                room.owner = new_secret
-            if old_secret in room.invited:
-                room.invited.pop(room.invited.idnex(old_secret))
-                room.invited.append(new_secret)
-            if old_secret in room.roommates:
-                room.roommates.pop(room.roommates.index(old_secret))
-                room.roommates.append(new_secret)
+            room.owner = new_secret
+            self._rooms.upsert(room)
 
 if __name__ == '__main__':
     q = QuarterMaster()
