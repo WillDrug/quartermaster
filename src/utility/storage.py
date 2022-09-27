@@ -75,7 +75,6 @@ class InMemory(Storage):
 
     def upsert(self, new_obj: KeyStored) -> None:
         assert isinstance(new_obj, KeyStored), f'{new_obj} is not of type {self.cls_stored} or subclass of KeyStored'
-
         self.data[new_obj.key()] = new_obj
 
     def delete(self, key: str):

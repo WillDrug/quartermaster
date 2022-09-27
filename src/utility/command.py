@@ -24,7 +24,7 @@ class CommandType(Enum):
     leave = 'leave'
 
 
-auth_required = ['home', 'rooms', 'merge', 'destroy', 'create', 'edit', 'invite', 'roommate', 'evict',
+auth_required = ['homes', 'rooms', 'merge', 'destroy', 'create', 'edit', 'invite', 'roommate', 'evict',
                  'invite', 'invite_clear']  # shutdown?
 
 
@@ -33,13 +33,13 @@ class Command(pydantic.BaseModel):
     command_type: CommandType
     auth: Optional[User]
     key: Optional[Union[int, str]]
-    value: Optional[Union[pydantic.UUID5, int, str, list, dict]]  # is this an OBJECT at this point?
+    value: Optional[Union[pydantic.UUID5, list, int, str, dict]]  # is this an OBJECT at this point?
 
     @pydantic.validator('auth')
     def auth_required(cls, value, values):
         chk = values.get('command_type')
         assert chk is not None, 'command_type mandatory for Command'
-        if chk in auth_required:
+        if chk.value in auth_required:
             assert value is not None, chk.value+' command requires auth!'
         return value
 

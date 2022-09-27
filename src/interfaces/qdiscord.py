@@ -132,7 +132,6 @@ class Discord(Interface):
         intents.message_content = True
         self.bot = QuartermasterDiscordClient(intents=intents)
         self.prepare_bot()
-        self.userbase = {}
         self.invites = {}
         super().__init__(send_queue, receive_queue, config, *args, **kwargs)
 
