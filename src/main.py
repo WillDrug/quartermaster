@@ -440,7 +440,7 @@ class QuarterMaster:
             if i is None:
                 raise RuntimeError(f'Process for interface {q} not found')
             i['process'].join()
-            self.__shutdown = True
+        self.__shutdown = True
         print('Quartermaster done full shutdown')
 
     async def save(self, command, interface):
