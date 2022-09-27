@@ -297,16 +297,16 @@ class QuarterMaster:
         shared_secret = uuid.uuid5(uuid.NAMESPACE_OID, ''.join(q.interface_id for q in user_bundle))
         # 4) for each user, update secret reference in rooms, save if updated, then update secret to the new one
         own_homes = self._homes.search_func(lambda o: o.owner in [q.secret for q in user_bundle])
-        new_home = Home(owner=shared_secret,
+        new_home = Home(
+             owner=shared_secret,
              timeout=max([q.timeout for q in own_homes]),
              locked=any([q.locked for q in own_homes]),
              closed=any([q.closed for q in own_homes]),
              invited=list(set(chain(*[q.invited for q in own_homes]))),
              roommates=list(set(chain(*[q.roommates for q in own_homes])))
         )
-        self._homes.upsert(new_home)
         self._homes.delete_via_obj(own_homes)
-
+        self._homes.upsert(new_home)
         for user in user_bundle:
             self.update_secrets(user.secret, shared_secret)
             user.secret = shared_secret
@@ -440,7 +440,7 @@ class QuarterMaster:
             if i is None:
                 raise RuntimeError(f'Process for interface {q} not found')
             i['process'].join()
-            self.__shutdown = True
+        self.__shutdown = True
         print('Quartermaster done full shutdown')
 
     async def save(self, command, interface):

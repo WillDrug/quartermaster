@@ -7,6 +7,15 @@ from utility.command import CommandType, Command, Response
 from model import *
 from functools import wraps
 
+class StringDict(dict):
+    def __setitem__(self, key, value):
+        return super().__setitem__(str(key), value)
+
+    def __getitem__(self, item):
+        return super().__getitem__(str(item))
+
+    def get(self, key):
+        return super().get(str(key))
 
 class Interface(metaclass=ABCMeta):
     @classmethod
@@ -28,7 +37,7 @@ class Interface(metaclass=ABCMeta):
         self.threads = [threading.Thread(daemon=True, target=self.process_commands),
                         threading.Thread(daemon=True, target=self.initialize)]
         self.waiting = {}
-        self.userbase = {}
+        self.userbase = StringDict()
         self.loop = asyncio.get_event_loop()
         self.last_sync = time.time()
 
@@ -45,6 +54,8 @@ class Interface(metaclass=ABCMeta):
             elif command.command_type == CommandType.users:
                 resp = await self.local_users(command)
             elif command.command_type == CommandType.merge:
+                if isinstance(command.value, dict):
+                    command.value = User(**command.value)
                 self.userbase[command.key] = command.value
                 resp = None
             if isinstance(resp, Response):
@@ -286,11 +297,11 @@ class Interface(metaclass=ABCMeta):
 
     def _secret_command(self, user_id, secret, callback):
         if secret is None:
-            secret = self.userbase.get(user_id).secret
+            secret = self.userbase.get(str(user_id)).secret
             text = f'Your secret is: <pre>{secret.__str__()}</pre>'
         else:
-            new_secret = self.merge_users(self.userbase.get(user_id), secret)
-            rooms = self.get_own_rooms(self.userbase.get(user_id), None)
+            new_secret = self.merge_users(self.userbase.get(str(user_id)), secret)
+            rooms = self.get_own_rooms(self.userbase.get(str(user_id)), None)
             if not new_secret.error:  # fixme move texts into interface.py
 
                 text = f'Your accounts were merged, your new secret is now: {new_secret.data}'

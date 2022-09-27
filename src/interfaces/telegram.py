@@ -5,7 +5,7 @@ from interfaces.interface import Interface
 import telebot
 from time import sleep
 from utility.command import CommandType, Command, Response
-from model import Invite
+from datetime import datetime, timedelta
 from functools import wraps
 from typing import Union
 import re
@@ -64,7 +64,7 @@ def master_only(func):
     @wraps(func)
     def check_master(self, message):
         # AFTER AUTH (!)
-        auth = self.userbase.get(message.from_user.id)
+        auth = self.userbase.get(str(message.from_user.id))
         if auth.key() not in self.config.master_ids:
             return
         return func(self, message)
@@ -153,7 +153,6 @@ class Telegram(Interface):
         self.bot = telebot.TeleBot(token, parse_mode='HTML')
         self.handle = ""
         self.prepare_bot()
-        self.userbase = {}
         self.state = {}
         super().__init__(send_queue, receive_queue, config, *args, **kwargs)
 
@@ -709,9 +708,10 @@ class Telegram(Interface):
         except telebot.apihelper.ApiTelegramException as e:
             return Response(command_id=command.command_id, error=True, error_message=e.__str__())
         for user in command.value:
-            self.bot.kick_chat_member(chat.id, user.interface_id, until_date=time.time())
             if chat.type in ['supergroup', 'channel']:
                 self.bot.unban_chat_member(chat.id, user.interface_id)
+            else:
+                self.bot.ban_chat_member(chat.id, user.interface_id, until_date=datetime.now() + timedelta(seconds=1))
 
         return Response(command_id=command.command_id, data=True)
 
